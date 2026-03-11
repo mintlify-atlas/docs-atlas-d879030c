@@ -1,0 +1,462 @@
+---
+title: Rollback
+description: Rolling back to previous versions when deployments go wrong
+---
+
+Kamal makes it easy to rollback to a previous version of your application when issues are detected. Rollbacks are fast because the previous version's container is still on the server.
+
+## How Rollback Works
+
+Kamal uses container versioning to enable instant rollbacks:
+
+1. Each deployment creates containers tagged with version identifiers (typically git SHAs)
+2. Previous containers are stopped but not immediately removed
+3. Rollback reactivates a previous container version
+4. The proxy is updated to route traffic to the rolled-back version
+
+<Info>
+  Rollback doesn't rebuild anything - it simply starts existing containers from a previous version.
+</Info>
+
+## Basic Rollback
+
+To rollback to a specific version:
+
+```bash
+kamal rollback VERSION
+```
+
+For example:
+
+```bash
+# Rollback to a specific git commit SHA
+kamal rollback abc123d
+
+# Or use a tag
+kamal rollback v1.2.3
+```
+
+## Finding Available Versions
+
+List containers available for rollback:
+
+```bash
+kamal app containers
+```
+
+Example output:
+```
+192.168.0.1:
+my-app-web-abc123d
+my-app-web-def456e (current)
+
+192.168.0.2:
+my-app-web-abc123d
+my-app-web-def456e (current)
+```
+
+Check the current running version:
+
+```bash
+kamal app version
+```
+
+## Rollback Implementation
+
+Here's how rollback works internally (`main.rb:82-104`):
+
+```ruby
+def rollback(version)
+  rolled_back = false
+  runtime = print_runtime do
+    with_lock do
+      invoke_options = deploy_options
+      
+      KAMAL.config.version = version
+      old_version = nil
+      
+      if container_available?(version)
+        run_hook "pre-deploy", secrets: true
+        
+        invoke "kamal:cli:app:boot", [], invoke_options.merge(version: version)
+        rolled_back = true
+      else
+        say "The app version '#{version}' is not available as a container", :red
+        say "Use 'kamal app containers' for available versions", :red
+      end
+    end
+  end
+  
+  run_hook "post-deploy", secrets: true, runtime: runtime.round.to_s if rolled_back
+end
+```
+
+### Container Availability Check
+
+```ruby
+# From main.rb:258-276
+def container_available?(version)
+  begin
+    on(KAMAL.app_hosts) do
+      KAMAL.roles_on(host).each do |role|
+        container_id = capture_with_info(
+          *KAMAL.app(role: role, host: host).container_id_for_version(version)
+        )
+        raise "Container not found" unless container_id.present?
+      end
+    end
+  rescue SSHKit::Runner::ExecuteError => e
+    if e.message =~ /Container not found/
+      say "Error looking for container version #{version}: #{e.message}"
+      return false
+    else
+      raise
+    end
+  end
+  
+  true
+end
+```
+
+<Warning>
+  Rollback only works if the container for that version still exists on the server. Old containers are pruned periodically.
+</Warning>
+
+## Rollback Process
+
+<Steps>
+  <Step title="Detect Issue">
+    Monitor your application and identify that a rollback is needed:
+    
+    ```bash
+    # Check logs for errors
+    kamal app logs --lines 100
+    
+    # Check current version
+    kamal app version
+    ```
+  </Step>
+  
+  <Step title="Find Previous Version">
+    Identify which version to rollback to:
+    
+    ```bash
+    # List all available containers
+    kamal app containers
+    
+    # Check audit log for deployment history
+    kamal audit
+    ```
+  </Step>
+  
+  <Step title="Execute Rollback">
+    Run the rollback command:
+    
+    ```bash
+    kamal rollback abc123d
+    ```
+    
+    This will:
+    - Acquire deployment lock
+    - Run pre-deploy hooks
+    - Boot containers with the specified version
+    - Update kamal-proxy routing
+    - Run post-deploy hooks
+  </Step>
+  
+  <Step title="Verify Rollback">
+    Confirm the rollback was successful:
+    
+    ```bash
+    # Verify version
+    kamal app version
+    
+    # Check application health
+    kamal app details
+    
+    # Monitor logs
+    kamal app logs --follow
+    ```
+  </Step>
+</Steps>
+
+## Rollback Scenarios
+
+### Immediate Rollback After Bad Deploy
+
+If you notice issues right after deployment:
+
+```bash
+# Stop the current deployment if still in progress
+# Then rollback to the previous version
+kamal app containers  # Find the previous version
+kamal rollback PREVIOUS_VERSION
+```
+
+### Rollback After Hours
+
+If you discover issues later:
+
+```bash
+# Check what version is currently running
+kamal app version
+
+# Review available versions
+kamal app containers
+
+# Check audit log to find the last known good version
+kamal audit | head -20
+
+# Rollback
+kamal rollback LAST_GOOD_VERSION
+```
+
+### Partial Rollback (Single Host)
+
+To rollback a specific host:
+
+```bash
+# Target specific host
+kamal app boot --version=abc123d --hosts=192.168.0.1
+```
+
+## Container Retention
+
+By default, Kamal retains the last 5 containers on each host. This is controlled by the `retain_containers` configuration:
+
+```yaml config/deploy.yml
+# Keep more versions available for rollback
+retain_containers: 10
+```
+
+<Note>
+  Increasing retention gives you more rollback options but uses more disk space.
+</Note>
+
+## Preventing Premature Cleanup
+
+If you want to ensure specific versions are available for rollback:
+
+```bash
+# Skip pruning during deployment
+kamal deploy  # Standard deploy includes pruning
+
+# Or use redeploy which skips pruning
+kamal redeploy
+```
+
+## Database Migrations and Rollback
+
+<Warning>
+  Rollbacks don't automatically reverse database migrations. You need to handle schema compatibility carefully.
+</Warning>
+
+### Safe Migration Strategies
+
+1. **Backward Compatible Migrations**
+   
+   Make migrations work with both old and new code:
+   
+   ```ruby
+   # Good: Add column with default
+   add_column :users, :new_field, :string, default: ""
+   
+   # Bad: Remove column that old code uses
+   remove_column :users, :old_field
+   ```
+
+2. **Multi-Phase Deployments**
+   
+   <Steps>
+     <Step title="Phase 1">
+       Deploy code that works with both old and new schema
+     </Step>
+     <Step title="Phase 2">
+       Run migrations
+     </Step>
+     <Step title="Phase 3">
+       Deploy code that uses new schema
+     </Step>
+   </Steps>
+
+3. **Manual Migration Rollback**
+   
+   If you must rollback after migrations:
+   
+   ```bash
+   # Rollback app containers
+   kamal rollback abc123d
+   
+   # Then manually rollback migrations
+   kamal app exec --reuse "rails db:rollback STEP=1"
+   ```
+
+## Rollback Hooks
+
+Rollback triggers the same deploy hooks as normal deployment:
+
+```bash .kamal/hooks/pre-deploy
+#!/bin/sh
+
+# Detect if this is a rollback
+if [ "$KAMAL_PERFORMING_ROLLBACK" = "true" ]; then
+  echo "Rolling back to $KAMAL_VERSION"
+  # Notify team
+  # Create incident ticket
+fi
+```
+
+<Info>
+  Currently, rollback uses the same hooks as deploy. You can detect rollback context by comparing versions or using custom environment variables.
+</Info>
+
+## Monitoring During Rollback
+
+Keep multiple terminals open to monitor the rollback:
+
+```bash
+# Terminal 1: Execute rollback
+kamal rollback abc123d
+
+# Terminal 2: Watch logs
+kamal app logs --follow
+
+# Terminal 3: Monitor containers
+watch -n 2 'kamal app containers'
+
+# Terminal 4: Check proxy status
+watch -n 2 'kamal proxy details'
+```
+
+## Failed Rollback Recovery
+
+If rollback itself fails:
+
+### Container Won't Start
+
+```bash
+# Check why the old container won't start
+kamal app logs --version=abc123d
+
+# Try starting manually
+kamal app start
+
+# If all else fails, deploy the previous version fresh
+kamal deploy --version=abc123d
+```
+
+### Version Not Available
+
+```
+The app version 'abc123d' is not available as a container
+```
+
+**Solution**: Deploy that version fresh:
+
+```bash
+# Checkout the old code
+git checkout abc123d
+
+# Deploy it
+kamal deploy
+
+# Return to your branch
+git checkout main
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Keep More Versions">
+    Increase `retain_containers` if you need longer rollback windows:
+    
+    ```yaml config/deploy.yml
+    retain_containers: 10
+    ```
+  </Step>
+  
+  <Step title="Document Known Good Versions">
+    Keep track of stable versions in your deployment log:
+    
+    ```bash
+    # Tag stable releases
+    git tag -a v1.2.3 -m "Stable production release"
+    git push --tags
+    ```
+  </Step>
+  
+  <Step title="Test Rollback Procedure">
+    Practice rollbacks in staging:
+    
+    ```bash
+    # Deploy new version to staging
+    kamal deploy --destination staging
+    
+    # Test rollback
+    kamal rollback PREVIOUS_VERSION --destination staging
+    ```
+  </Step>
+  
+  <Step title="Monitor After Rollback">
+    Watch the application closely after rollback:
+    
+    ```bash
+    kamal app logs --follow --grep ERROR
+    ```
+  </Step>
+  
+  <Step title="Plan Forward Fixes">
+    After rolling back, fix the issue and deploy forward:
+    
+    ```bash
+    # Don't stay on old version forever
+    # Fix the bug
+    # Deploy the fix
+    kamal deploy
+    ```
+  </Step>
+</Steps>
+
+## Audit Trail
+
+Kamal maintains an audit log of all operations:
+
+```bash
+kamal audit
+```
+
+Example output:
+```
+192.168.0.1:
+[2026-03-11 10:15:23 UTC] [user] Deployed app version def456e
+[2026-03-11 10:45:12 UTC] [user] Rolled back to app version abc123d
+[2026-03-11 11:02:05 UTC] [user] Deployed app version ghi789f
+```
+
+<Info>
+  The audit log helps you understand deployment history and identify patterns in rollbacks.
+</Info>
+
+## Alternative: Maintenance Mode
+
+Instead of immediate rollback, you might want to put the app in maintenance mode while investigating:
+
+```bash
+# Enable maintenance mode
+kamal app maintenance
+
+# Investigate the issue
+kamal app logs --grep ERROR
+
+# Either fix and redeploy, or rollback
+kamal rollback abc123d
+
+# Return to live mode
+kamal app live
+```
+
+## Next Steps
+
+- Learn about [zero-downtime deployments](/deployment/zero-downtime)
+- Configure [rolling deployments](/deployment/rolling-deploys) to minimize rollback risk
+- Set up monitoring and alerting to detect issues quickly

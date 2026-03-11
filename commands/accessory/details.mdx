@@ -1,0 +1,401 @@
+---
+title: kamal accessory details
+description: Show detailed information about accessory containers
+---
+
+The `kamal accessory details` command displays comprehensive information about running accessory containers, including container status, configuration, ports, volumes, and more.
+
+## Basic Usage
+
+```bash
+kamal accessory details <NAME>
+```
+
+### View Database Details
+
+```bash
+kamal accessory details mysql
+```
+
+### View All Accessories
+
+```bash
+kamal accessory details all
+```
+
+<Note>
+Using `all` as the accessory name shows details for all configured accessories.
+</Note>
+
+## Output Information
+
+The details command shows:
+
+- **Container ID** - Unique container identifier
+- **Image** - Docker image and tag
+- **Command** - Container command and arguments
+- **Status** - Current state (Up/Exited) and runtime
+- **Ports** - Port mappings
+- **Volumes** - Mounted volumes and bind mounts
+- **Networks** - Connected Docker networks
+- **Labels** - Container labels
+
+## Command Options
+
+### Quiet Mode
+
+Suppress host prefixes in output:
+
+```bash
+kamal accessory details mysql --quiet
+```
+
+Useful when scripting or processing output.
+
+## Examples
+
+### Check MySQL Status
+
+<Tabs>
+  <Tab title="Command">
+    ```bash
+    kamal accessory details mysql
+    ```
+  </Tab>
+  
+  <Tab title="Output">
+    ```text
+    192.168.0.10:
+      Container ID: a1b2c3d4e5f6
+      Image: mysql:8.0
+      Command: "mysqld"
+      Status: Up 5 days
+      Ports: 127.0.0.1:3306->3306/tcp
+      Volumes:
+        - myapp-mysql/mysql-data:/var/lib/mysql
+      Networks: kamal
+      Labels:
+        service=myapp-mysql
+        app=myapp
+        environment=production
+    ```
+  </Tab>
+</Tabs>
+
+### Check Redis Cluster
+
+<CodeGroup>
+```yaml Configuration
+accessories:
+  redis:
+    image: redis:7-alpine
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+    directories:
+      - redis-data:/data
+```
+
+```bash Command
+kamal accessory details redis
+```
+
+```text Output
+192.168.0.11:
+  Container ID: abc123def456
+  Image: redis:7-alpine
+  Command: "redis-server"
+  Status: Up 2 days
+  Volumes:
+    - myapp-redis/redis-data:/data
+  Networks: kamal
+
+192.168.0.12:
+  Container ID: ghi789jkl012
+  Image: redis:7-alpine
+  Command: "redis-server"
+  Status: Up 2 days
+  Volumes:
+    - myapp-redis/redis-data:/data
+  Networks: kamal
+```
+</CodeGroup>
+
+### Check Accessory with Proxy
+
+```bash
+kamal accessory details adminer
+```
+
+```text
+192.168.0.10:
+  Container ID: xyz789abc123
+  Image: adminer:latest
+  Command: "php -S 0.0.0.0:8080..."
+  Status: Up 12 hours
+  Networks: kamal
+  Labels:
+    service=myapp-adminer
+    kamal-proxy.host=db-admin.example.com
+    kamal-proxy.app_port=8080
+```
+
+<Note>
+Accessories with proxy configuration show kamal-proxy labels in their details.
+</Note>
+
+### Check All Accessories
+
+```bash
+kamal accessory details all
+```
+
+Displays details for every configured accessory sequentially.
+
+## Use Cases
+
+### Verify Deployment
+
+After booting an accessory:
+
+```bash
+kamal accessory boot mysql
+
+# Verify it's running
+kamal accessory details mysql
+```
+
+### Troubleshoot Issues
+
+Check why an accessory isn't responding:
+
+```bash
+# Check status
+kamal accessory details redis
+
+# Common issues to look for:
+# - Status: Exited (container crashed)
+# - Missing volumes (data not persisted)
+# - Wrong ports (can't connect)
+```
+
+### Audit Configuration
+
+Verify actual container configuration:
+
+```bash
+kamal accessory details mysql
+
+# Verify:
+# - Correct image version
+# - Volumes are mounted
+# - Ports are mapped correctly
+# - Labels are applied
+```
+
+### Monitor Health
+
+Check uptime and status:
+
+```bash
+kamal accessory details postgres
+
+# Look at "Status" line:
+# - "Up X days" = healthy
+# - "Restarting" = failing health checks
+# - "Exited (1)" = crashed
+```
+
+## Checking Multiple Hosts
+
+For accessories running on multiple hosts:
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+      - 192.168.0.13
+```
+
+```bash
+kamal accessory details redis
+# Shows details for all three hosts
+```
+
+Each host's output is clearly separated with the hostname prefix.
+
+## Interpreting Status
+
+### Healthy Container
+
+```text
+Status: Up 5 days
+```
+
+Container is running normally.
+
+### Recently Restarted
+
+```text
+Status: Up 30 seconds
+```
+
+Container started recently. Could indicate:
+- Recent deployment
+- Recent restart
+- Container crash and restart
+
+### Unhealthy Container
+
+```text
+Status: Up 2 minutes (unhealthy)
+```
+
+Health checks are failing. Check logs:
+
+```bash
+kamal accessory logs mysql --lines 50
+```
+
+### Stopped Container
+
+```text
+Status: Exited (0) 2 hours ago
+```
+
+Container stopped. Exit code meanings:
+- `(0)` = Clean shutdown
+- `(1)` = Application error
+- `(137)` = Killed (SIGKILL)
+- `(143)` = Terminated (SIGTERM)
+
+### Restarting Container
+
+```text
+Status: Restarting (1) 10 seconds ago
+```
+
+Container is crash-looping. Investigate immediately:
+
+```bash
+kamal accessory logs mysql --lines 100
+```
+
+## Scripting with Details
+
+### Extract Container ID
+
+```bash
+kamal accessory details mysql --quiet | grep "Container ID" | awk '{print $3}'
+```
+
+### Check If Running
+
+```bash
+if kamal accessory details mysql | grep -q "Status: Up"; then
+  echo "MySQL is running"
+else
+  echo "MySQL is not running"
+  kamal accessory start mysql
+fi
+```
+
+### Monitor Multiple Accessories
+
+```bash
+#!/bin/bash
+for accessory in mysql redis postgres; do
+  echo "=== $accessory ==="
+  kamal accessory details $accessory
+  echo ""
+done
+```
+
+## Implementation Details
+
+From `accessory.rb:133-144`:
+
+```ruby
+def details(name)
+  quiet = options[:quiet]
+  if name == "all"
+    KAMAL.accessory_names.each { |accessory_name| details(accessory_name) }
+  else
+    type = "Accessory #{name}"
+    with_accessory(name) do |accessory, hosts|
+      on(hosts) { puts_by_host host, capture_with_info(*accessory.info), type: type, quiet: quiet }
+    end
+  end
+end
+```
+
+The command uses `docker inspect` under the hood to gather all container information.
+
+## Comparison with Other Commands
+
+| Command | Shows | Use Case |
+|---------|-------|----------|
+| `details` | Full container info | Troubleshooting, verification |
+| `logs` | Container output | Debugging, monitoring |
+| `kamal details` | All services | Overall system status |
+
+## Troubleshooting
+
+### No Container Found
+
+```text
+Error: No such container: myapp-mysql
+```
+
+**Solution**:
+
+```bash
+# Boot the accessory first
+kamal accessory boot mysql
+
+# Then check details
+kamal accessory details mysql
+```
+
+### Can't Connect to Host
+
+```text
+SSHKit::Runner::ExecuteError: Connection timeout
+```
+
+**Solution**:
+
+```bash
+# Test SSH connection
+ssh user@192.168.0.10
+
+# Check SSH configuration
+kamal config | grep -A 10 ssh
+```
+
+### Wrong Accessory Name
+
+```text
+No accessory by the name of 'postgre' (options: mysql, redis, postgres)
+```
+
+**Solution**: Use the correct name from your configuration:
+
+```bash
+kamal accessory details postgres
+```
+
+## Related Commands
+
+- [`kamal accessory logs`](/commands/accessory/logs) - View accessory logs
+- [`kamal accessory boot`](/commands/accessory/boot) - Start new accessory
+- [`kamal details`](/commands/details) - View all services
+- [`kamal accessory restart`](/commands/accessory/restart) - Restart accessory
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Troubleshooting Guide](/troubleshooting/common-issues) - Common issues and solutions

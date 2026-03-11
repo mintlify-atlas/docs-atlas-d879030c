@@ -1,0 +1,552 @@
+---
+title: "Remote Builder Setup"
+description: "Comprehensive guide to setting up and using remote builders for efficient multi-architecture builds"
+---
+
+# Remote Builder Setup
+
+Remote builders offload image building to a dedicated server, providing faster builds and support for multiple architectures without requiring local emulation.
+
+## Why Use a Remote Builder?
+
+<CardGroup cols={2}>
+  <Card title="Faster Builds" icon="gauge-high">
+    Leverage powerful remote hardware for CPU-intensive builds
+  </Card>
+  <Card title="Native Architectures" icon="microchip">
+    Build ARM images on ARM hardware instead of slow emulation
+  </Card>
+  <Card title="Faster Uploads" icon="upload">
+    Remote builder to registry is often faster than local to registry
+  </Card>
+  <Card title="Save Local Resources" icon="battery-full">
+    Keep your development machine free for other work
+  </Card>
+</CardGroup>
+
+## How Remote Building Works
+
+Kamal uses Docker's context and buildx features to execute builds on remote servers:
+
+1. **Context Creation**: Creates a Docker context pointing to the remote server via SSH
+2. **Builder Setup**: Creates a buildx builder using the remote context
+3. **Build Execution**: Runs `docker buildx build` against the remote builder
+4. **Image Push**: Remote server pushes completed images directly to your registry
+
+**Reference**: See `lib/kamal/commands/builder/remote.rb:60-74` for implementation.
+
+<Note>
+Built images are pushed directly from the remote builder to your registry, bypassing your local machine entirely. This is often much faster than building locally and pushing.
+</Note>
+
+## Remote Builder Prerequisites
+
+### Server Requirements
+
+<Steps>
+  <Step title="Linux Server">
+    Any Linux server with Docker installed:
+    - Ubuntu 20.04+ recommended
+    - At least 2GB RAM (4GB+ recommended)
+    - 20GB+ disk space for build cache
+  </Step>
+  
+  <Step title="Docker Installation">
+    Install Docker on the remote server:
+    ```bash
+    # On the remote server
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker $USER
+    ```
+  </Step>
+  
+  <Step title="SSH Access">
+    Configure passwordless SSH access:
+    ```bash
+    # On your local machine
+    ssh-copy-id user@builder.example.com
+    
+    # Test the connection
+    ssh user@builder.example.com docker version
+    ```
+  </Step>
+</Steps>
+
+### Docker Configuration
+
+Ensure Docker daemon is accessible via SSH:
+
+```bash
+# On the remote server, verify Docker socket permissions
+ls -la /var/run/docker.sock
+
+# Should show: srw-rw---- 1 root docker
+```
+
+## Basic Remote Builder Configuration
+
+Add the remote builder to your `config/deploy.yml`:
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  arch:
+    - amd64
+    - arm64
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:22-24` for remote configuration.
+
+## Advanced Remote Builder Configuration
+
+### SSH Connection Options
+
+<Tabs>
+  <Tab title="Basic SSH">
+    ```yaml
+    builder:
+      remote: ssh://deploy@builder.example.com
+    ```
+  </Tab>
+  
+  <Tab title="Custom Port">
+    ```yaml
+    builder:
+      remote: ssh://deploy@builder.example.com:2222
+    ```
+  </Tab>
+  
+  <Tab title="SSH Key">
+    ```yaml
+    builder:
+      remote: ssh://deploy@builder.example.com
+    
+    ssh:
+      user: deploy
+      keys:
+        - ~/.ssh/builder_id_rsa
+    ```
+  </Tab>
+  
+  <Tab title="Jump Host">
+    ```yaml
+    builder:
+      remote: ssh://deploy@builder.internal.example.com
+    
+    ssh:
+      proxy: jump@bastion.example.com
+    ```
+  </Tab>
+</Tabs>
+
+### Registry Authentication
+
+The remote builder needs access to your Docker registry:
+
+<CodeGroup>
+```yaml Docker Hub
+registry:
+  server: docker.io
+  username:
+    - DOCKER_USERNAME
+  password:
+    - DOCKER_PASSWORD
+
+builder:
+  remote: ssh://user@builder.example.com
+```
+
+```yaml GitHub Container Registry
+registry:
+  server: ghcr.io
+  username:
+    - GHCR_USERNAME
+  password:
+    - GHCR_TOKEN
+
+builder:
+  remote: ssh://user@builder.example.com
+```
+
+```yaml Private Registry
+registry:
+  server: registry.example.com
+  username:
+    - REGISTRY_USER
+  password:
+    - REGISTRY_PASSWORD
+
+builder:
+  remote: ssh://user@builder.example.com
+```
+</CodeGroup>
+
+<Warning>
+When using a remote builder, Kamal automatically logs into the registry on the remote builder server. Ensure your registry credentials are properly configured.
+
+See `lib/kamal/commands/builder/remote.rb:27-29` for authentication behavior.
+</Warning>
+
+## Hybrid Builders
+
+Hybrid mode combines local and remote building for optimal performance:
+
+```yaml
+builder:
+  remote: ssh://user@arm-builder.example.com
+  arch:
+    - amd64  # Built locally on your amd64 machine
+    - arm64  # Built remotely on ARM server
+```
+
+**Reference**: See `lib/kamal/commands/builder/hybrid.rb` for hybrid implementation.
+
+### How Hybrid Mode Works
+
+Kamal automatically detects your local architecture and splits the build:
+
+- **Local arches**: Built on your machine (fast, native)
+- **Remote arches**: Built on the remote server (native remote arch)
+
+**Reference**: See `lib/kamal/configuration/builder.rb:30-46` for architecture detection.
+
+<Tabs>
+  <Tab title="Intel/AMD Mac or PC">
+    ```yaml
+    # Running on amd64 (Intel Mac, most PCs)
+    builder:
+      remote: ssh://user@arm-builder.example.com
+      arch:
+        - amd64  # Fast local build
+        - arm64  # Native remote build
+    ```
+    
+    Result: amd64 built locally, arm64 built on remote ARM server
+  </Tab>
+  
+  <Tab title="Apple Silicon Mac">
+    ```yaml
+    # Running on arm64 (M1/M2/M3 Mac)
+    builder:
+      remote: ssh://user@amd-builder.example.com
+      arch:
+        - amd64  # Native remote build
+        - arm64  # Fast local build
+    ```
+    
+    Result: arm64 built locally, amd64 built on remote x86 server
+  </Tab>
+</Tabs>
+
+### Forcing Remote-Only Builds
+
+Disable local building entirely:
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  local: false
+  arch:
+    - amd64
+    - arm64
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:100-102` for local disabling.
+
+## Build Cache with Remote Builders
+
+Use registry caching to speed up remote builds:
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  cache:
+    type: registry
+    image: my-app-build-cache
+    options: mode=max
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:105-124` for cache configuration.
+
+<Expandable title="Cache configuration details">
+
+- **type**: `registry` or `gha` (GitHub Actions)
+- **image**: Custom cache image name (defaults to `{image}-build-cache`)
+- **options**: Additional cache options
+  - `mode=max`: Cache all layers (slower push, faster builds)
+  - `mode=min`: Cache only final layers (faster push, slower builds)
+
+**Reference**: Cache image defaults in `lib/kamal/configuration/builder.rb:172-178`.
+
+</Expandable>
+
+## Multi-Server Remote Builders
+
+Use different remote builders for different roles:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+  
+  api:
+    hosts:
+      - 192.168.1.11
+
+builder:
+  remote: ssh://user@builder.example.com
+  arch:
+    - amd64
+    - arm64
+```
+
+All roles use the same remote builder. For different builders per role, use separate deployments.
+
+## Troubleshooting Remote Builders
+
+### Check Builder Status
+
+```bash
+# View remote builder information
+kamal builder info
+
+# Should show both local and remote contexts
+```
+
+**Reference**: See `lib/kamal/commands/builder/remote.rb:14-18` for info command.
+
+### Verify SSH Connection
+
+```bash
+# Test SSH connection
+ssh user@builder.example.com docker version
+
+# Test with Kamal's SSH config
+kamal builder info
+```
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="Error: Cannot connect to remote builder">
+    **Symptoms**: `docker context create` fails or times out
+    
+    **Solutions**:
+    1. Verify SSH connection: `ssh user@builder.example.com`
+    2. Check Docker is running: `ssh user@builder.example.com docker version`
+    3. Verify user is in docker group: `ssh user@builder.example.com groups`
+    4. Check firewall rules allow SSH (port 22 or custom)
+  </Accordion>
+  
+  <Accordion title="Error: Permission denied accessing Docker">
+    **Symptoms**: "Permission denied while trying to connect to Docker daemon"
+    
+    **Solutions**:
+    1. Add user to docker group on remote server:
+       ```bash
+       sudo usermod -aG docker $USER
+       ```
+    2. Log out and back in, or restart the SSH daemon
+    3. Verify with: `ssh user@builder.example.com docker ps`
+  </Accordion>
+  
+  <Accordion title="Error: Cannot push to registry from remote">
+    **Symptoms**: Build succeeds but push fails
+    
+    **Solutions**:
+    1. Ensure registry credentials are correct in `.kamal/secrets`
+    2. Test registry login on remote: 
+       ```bash
+       ssh user@builder.example.com docker login registry.example.com
+       ```
+    3. Check network connectivity from builder to registry
+    4. Verify registry URL is correct
+  </Accordion>
+  
+  <Accordion title="Slow builds on remote builder">
+    **Symptoms**: Builds take longer on remote than locally
+    
+    **Solutions**:
+    1. Enable build cache:
+       ```yaml
+       builder:
+         cache:
+           type: registry
+       ```
+    2. Increase remote server resources (CPU/RAM)
+    3. Check remote server disk space: `df -h`
+    4. Clear old build cache: `ssh user@builder.example.com docker builder prune`
+  </Accordion>
+</AccordionGroup>
+
+## Remote Builder Security
+
+### SSH Security Best Practices
+
+<Steps>
+  <Step title="Use SSH Keys">
+    Never use password authentication. Always use SSH keys:
+    ```bash
+    ssh-keygen -t ed25519 -C "kamal-builder"
+    ssh-copy-id -i ~/.ssh/id_ed25519 user@builder.example.com
+    ```
+  </Step>
+  
+  <Step title="Restrict SSH Access">
+    On the remote server, edit `/etc/ssh/sshd_config`:
+    ```
+    PermitRootLogin no
+    PasswordAuthentication no
+    PubkeyAuthentication yes
+    AllowUsers deploy
+    ```
+  </Step>
+  
+  <Step title="Use Firewall">
+    Restrict SSH access to known IPs:
+    ```bash
+    sudo ufw allow from YOUR_IP to any port 22
+    sudo ufw enable
+    ```
+  </Step>
+</Steps>
+
+### Docker Security
+
+<Warning>
+The Docker socket provides root-level access to the host. Only grant Docker access to trusted users.
+</Warning>
+
+```bash
+# Create dedicated builder user
+sudo useradd -m -s /bin/bash kamal-builder
+sudo usermod -aG docker kamal-builder
+
+# Use this user for remote builds
+```
+
+## Remote Builder Infrastructure
+
+### Cloud Provider Setup
+
+<Tabs>
+  <Tab title="AWS EC2">
+    ```bash
+    # Launch EC2 instance
+    # Recommended: t3.medium or larger
+    # AMI: Ubuntu 22.04 LTS
+    
+    # Install Docker
+    ssh -i key.pem ubuntu@ec2-instance.amazonaws.com
+    curl -fsSL https://get.docker.com | sh
+    
+    # Configure in deploy.yml
+    builder:
+      remote: ssh://ubuntu@ec2-instance.amazonaws.com
+    ```
+  </Tab>
+  
+  <Tab title="DigitalOcean">
+    ```bash
+    # Create Droplet (4GB RAM recommended)
+    # Image: Docker on Ubuntu 22.04
+    
+    # Configure in deploy.yml
+    builder:
+      remote: ssh://root@droplet.digitalocean.com
+    ```
+  </Tab>
+  
+  <Tab title="Hetzner">
+    ```bash
+    # Create Cloud Server
+    # Type: CPX21 or larger
+    # Image: Ubuntu 22.04
+    
+    # Install Docker
+    ssh root@hetzner-server.com
+    curl -fsSL https://get.docker.com | sh
+    
+    # Configure in deploy.yml
+    builder:
+      remote: ssh://root@hetzner-server.com
+    ```
+  </Tab>
+</Tabs>
+
+### ARM Builder Setup
+
+For native ARM builds (M1/M2 Mac, ARM servers):
+
+```bash
+# AWS Graviton instance (ARM)
+aws ec2 run-instances --instance-type t4g.medium --image-id ami-arm64...
+
+# Or Hetzner ARM
+# CAX11 or larger
+
+# Or Oracle Cloud ARM (free tier available)
+# VM.Standard.A1.Flex
+```
+
+Configuration:
+```yaml
+builder:
+  remote: ssh://ubuntu@arm-builder.example.com
+  arch:
+    - amd64  # Built locally on your x86 machine
+    - arm64  # Built natively on remote ARM server
+```
+
+## Performance Optimization
+
+### Build Cache Optimization
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  cache:
+    type: registry
+    options: mode=max,image-manifest=true,oci-mediatypes=true
+```
+
+### Network Optimization
+
+For faster builds, ensure:
+- Remote builder and registry are in the same region/datacenter
+- Remote builder has fast internet connection
+- Use private networking between builder and registry when possible
+
+### Resource Allocation
+
+Minimum recommended specs:
+- **Development**: 2 vCPU, 4GB RAM
+- **Production**: 4 vCPU, 8GB RAM
+- **Large apps**: 8 vCPU, 16GB RAM
+
+## Cleanup and Maintenance
+
+```bash
+# Clean up old build cache
+ssh user@builder.example.com docker builder prune -f
+
+# Clean up old images
+ssh user@builder.example.com docker image prune -a -f
+
+# Check disk usage
+ssh user@builder.example.com df -h
+```
+
+## Monitoring Remote Builders
+
+```bash
+# View build logs in real-time
+kamal build push
+
+# Check builder disk usage
+ssh user@builder.example.com docker system df
+
+# Monitor builder resources
+ssh user@builder.example.com htop
+```

@@ -1,0 +1,590 @@
+---
+title: Accessory Configuration
+description: Configure additional services like databases, Redis, and more
+---
+
+Accessories are additional Docker containers that run alongside your main application, such as databases, caches, or other supporting services.
+
+## Overview
+
+Accessories are managed separately from the main application:
+- They are not updated during app deployments
+- They do not have zero-downtime deployments
+- They can run on any host (not limited to app servers)
+- Each accessory is managed independently
+
+## Basic Configuration
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    env:
+      clear:
+        MYSQL_ROOT_HOST: '%'
+      secret:
+        - MYSQL_ROOT_PASSWORD
+```
+
+## Required Configuration
+
+<ParamField path="image" type="string" required>
+  Docker image to use for the accessory.
+  
+  ```yaml
+  accessories:
+    redis:
+      image: redis:7
+  ```
+</ParamField>
+
+<ParamField path="host | hosts | role | roles | tag | tags" required>
+  Specify where the accessory runs. Use exactly one of these options.
+</ParamField>
+
+## Host Configuration
+
+Specify where the accessory runs:
+
+<Tabs>
+  <Tab title="Single Host">
+    ```yaml
+    accessories:
+      mysql:
+        image: mysql:8.0
+        host: 192.168.0.10
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Hosts">
+    ```yaml
+    accessories:
+      redis:
+        image: redis:7
+        hosts:
+          - 192.168.0.11
+          - 192.168.0.12
+    ```
+  </Tab>
+  
+  <Tab title="By Role">
+    ```yaml
+    accessories:
+      mysql:
+        image: mysql:8.0
+        role: db
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Roles">
+    ```yaml
+    accessories:
+      monitoring:
+        image: prometheus:latest
+        roles:
+          - web
+          - workers
+    ```
+  </Tab>
+  
+  <Tab title="By Tag">
+    ```yaml
+    accessories:
+      redis:
+        image: redis:7
+        tag: cache
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Tags">
+    ```yaml
+    accessories:
+      monitoring:
+        image: datadog/agent:latest
+        tags:
+          - monitoring
+          - production
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+The `role`, `roles`, `tag`, and `tags` options reference servers defined in your `servers` configuration.
+</Note>
+
+## Service Name
+
+<ParamField path="service" type="string">
+  Custom service name. Defaults to `<service>-<accessory-name>`.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    service: production-mysql
+    image: mysql:8.0
+    host: 192.168.0.10
+```
+
+## Custom Command
+
+<ParamField path="cmd" type="string">
+  Override the default container command.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    cmd: mysqld --character-set-server=utf8mb4
+```
+
+## Port Mapping
+
+<ParamField path="port" type="string">
+  Publish container ports to the host.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    port: "127.0.0.1:3306:3306"
+```
+
+<Warning>
+Be careful with port exposure. Binding to `0.0.0.0` makes the port accessible from anywhere. Use `127.0.0.1` to restrict to localhost only.
+</Warning>
+
+**Formats:**
+- `"3306:3306"` - Bind to all interfaces
+- `"127.0.0.1:3306:3306"` - Bind to localhost only
+- `"3307:3306"` - Host port 3307 maps to container port 3306
+
+## Labels
+
+<ParamField path="labels" type="object">
+  Additional Docker labels for the container.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    labels:
+      app: myapp
+      environment: production
+      backup: daily
+```
+
+## Docker Options
+
+<ParamField path="options" type="object">
+  Additional Docker run options passed as `--<name> <value>`.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    options:
+      restart: unless-stopped
+      memory: 4g
+      cpus: 2
+      health-cmd: "mysqladmin ping -h localhost"
+      health-interval: 10s
+```
+
+## Environment Variables
+
+<ParamField path="env" type="object">
+  Environment variables for the container. See [Environment Configuration](/configuration/environment).
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    env:
+      clear:
+        MYSQL_ROOT_HOST: '%'
+        MYSQL_DATABASE: myapp_production
+      secret:
+        - MYSQL_ROOT_PASSWORD
+```
+
+## File Mounting
+
+<ParamField path="files" type="array">
+  Files to upload from local machine and mount into the container.
+</ParamField>
+
+### String Format
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    files:
+      - config/mysql/my.cnf:/etc/mysql/my.cnf
+      - config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - config/certs:/etc/mysql/certs:ro,Z
+```
+
+**Format:** `local:remote[:options]`
+- `local` - Local file path (relative to project root)
+- `remote` - Container path
+- `options` - Mount options: `ro` (read-only), `z`/`Z` (SELinux labels)
+
+### Hash Format
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    files:
+      - local: config/mysql/secret.key
+        remote: /etc/mysql/secret.key
+        mode: "0600"
+        owner: "mysql:mysql"
+      - local: config/mysql/ca-cert.pem
+        remote: /etc/mysql/certs/ca-cert.pem
+        mode: "0644"
+        owner: "1000:1000"
+        options: "Z"
+```
+
+<Note>
+Setting `owner` requires root access on the host.
+</Note>
+
+### ERB Files
+
+Files with `.erb` extension are evaluated before uploading:
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    files:
+      - config/mysql/my.cnf.erb:/etc/mysql/my.cnf
+```
+
+**Example `config/mysql/my.cnf.erb`:**
+```erb
+[mysqld]
+max_connections = <%= ENV['MYSQL_MAX_CONNECTIONS'] || 150 %>
+bind-address = <%= ENV['MYSQL_BIND_ADDRESS'] || '127.0.0.1' %>
+```
+
+## Directory Mounting
+
+<ParamField path="directories" type="array">
+  Directories to create on the host and mount into the container.
+</ParamField>
+
+### String Format
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    directories:
+      - mysql-data:/var/lib/mysql
+      - mysql-logs:/var/log/mysql:z
+```
+
+**Format:** `local:remote[:options]`
+- `local` - Directory name (created in `$PWD/<service-name>/`)
+- `remote` - Container path
+- `options` - Mount options
+
+### Hash Format
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    directories:
+      - local: mysql-data
+        remote: /var/lib/mysql
+        mode: "0750"
+        owner: "mysql:mysql"
+      - local: mysql-logs
+        remote: /var/log/mysql
+        mode: "0755"
+        options: "z"
+```
+
+### Absolute Paths
+
+Use absolute paths for specific host locations:
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    directories:
+      - /mnt/data/mysql:/var/lib/mysql
+```
+
+## Volumes
+
+<ParamField path="volumes" type="array">
+  Additional volume mounts (not automatically created).
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    volumes:
+      - /mnt/backups:/backups:ro
+      - mysql-config:/etc/mysql/conf.d
+```
+
+## Network
+
+<ParamField path="network" type="string" default="kamal">
+  Docker network to attach the container to.
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    network: custom-network
+```
+
+## Registry
+
+<ParamField path="registry" type="object">
+  Use a different registry for this accessory. See [Registry Configuration](/configuration/registry).
+</ParamField>
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    registry:
+      server: registry.example.com
+      username: mysql-user
+      password:
+        - MYSQL_REGISTRY_PASSWORD
+```
+
+## Proxy
+
+<ParamField path="proxy" type="object">
+  Run the accessory behind kamal-proxy. See [Proxy Configuration](/configuration/proxy).
+</ParamField>
+
+```yaml
+accessories:
+  web-ui:
+    image: adminer:latest
+    host: 192.168.0.10
+    proxy:
+      host: db-admin.example.com
+      ssl: true
+      app_port: 8080
+```
+
+## Complete Examples
+
+<Accordion title="MySQL Database">
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    port: "127.0.0.1:3306:3306"
+    
+    env:
+      clear:
+        MYSQL_ROOT_HOST: '%'
+        MYSQL_DATABASE: myapp_production
+      secret:
+        - MYSQL_ROOT_PASSWORD
+    
+    files:
+      - config/mysql/my.cnf:/etc/mysql/my.cnf
+      - db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    
+    directories:
+      - mysql-data:/var/lib/mysql
+      - mysql-logs:/var/log/mysql
+    
+    options:
+      restart: unless-stopped
+      memory: 4g
+      health-cmd: "mysqladmin ping -h localhost"
+      health-interval: 10s
+```
+</Accordion>
+
+<Accordion title="Redis Cache">
+```yaml
+accessories:
+  redis:
+    image: redis:7-alpine
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+    port: "127.0.0.1:6379:6379"
+    
+    cmd: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+    
+    directories:
+      - redis-data:/data
+    
+    options:
+      restart: unless-stopped
+      memory: 2g
+```
+</Accordion>
+
+<Accordion title="PostgreSQL with Backups">
+```yaml
+accessories:
+  postgres:
+    image: postgres:15
+    host: 192.168.0.10
+    port: "127.0.0.1:5432:5432"
+    
+    env:
+      clear:
+        POSTGRES_DB: myapp_production
+        POSTGRES_USER: myapp
+      secret:
+        - POSTGRES_PASSWORD
+    
+    files:
+      - config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    
+    directories:
+      - postgres-data:/var/lib/postgresql/data
+    
+    volumes:
+      - /mnt/backups:/backups
+    
+    options:
+      restart: unless-stopped
+      memory: 8g
+      shm-size: 1g
+```
+</Accordion>
+
+<Accordion title="Monitoring with Proxy">
+```yaml
+accessories:
+  prometheus:
+    image: prom/prometheus:latest
+    host: 192.168.0.13
+    
+    files:
+      - config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    
+    directories:
+      - prometheus-data:/prometheus
+    
+    proxy:
+      host: metrics.example.com
+      ssl: true
+      app_port: 9090
+    
+    options:
+      restart: unless-stopped
+```
+</Accordion>
+
+<Accordion title="Multi-Host Redis Cluster">
+```yaml
+accessories:
+  redis:
+    image: redis:7-alpine
+    role: cache
+    
+    directories:
+      - redis-data:/data
+    
+    options:
+      restart: unless-stopped
+      network: host
+    
+    cmd: >
+      redis-server
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+```
+</Accordion>
+
+## Managing Accessories
+
+```bash
+# Boot an accessory
+kamal accessory boot mysql
+
+# Boot all accessories
+kamal accessory boot --all
+
+# Restart an accessory
+kamal accessory restart mysql
+
+# Stop an accessory
+kamal accessory stop mysql
+
+# Remove an accessory
+kamal accessory remove mysql
+
+# View accessory logs
+kamal accessory logs mysql
+
+# Execute command in accessory
+kamal accessory exec mysql "mysql -u root -p"
+
+# View accessory details
+kamal accessory details mysql
+```
+
+## Best Practices
+
+<Note>
+**Persistent Data**: Always use directories or volumes for data that needs to persist across container restarts.
+</Note>
+
+<Warning>
+**Port Security**: Bind ports to `127.0.0.1` unless external access is required. Use firewall rules for production.
+</Warning>
+
+<Note>
+**Resource Limits**: Set memory and CPU limits with `options` to prevent accessories from consuming all host resources.
+</Note>
+
+<Warning>
+**Secrets**: Never hard-code passwords. Always use the `secret` configuration with `.kamal/secrets`.
+</Warning>
+
+## Related Configuration
+
+- [Environment Variables](/configuration/environment) - Configure accessory environment variables
+- [Registry](/configuration/registry) - Use different registries for accessories
+- [Proxy](/configuration/proxy) - Run accessories behind the proxy
+- [Servers](/configuration/servers) - Reference roles and tags for accessory placement

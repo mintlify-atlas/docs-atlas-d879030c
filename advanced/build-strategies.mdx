@@ -1,0 +1,426 @@
+---
+title: "Build Strategies"
+description: "Understanding local, remote, hybrid, pack, and cloud build strategies in Kamal"
+---
+
+# Build Strategies
+
+Kamal supports multiple build strategies to accommodate different workflows, architectures, and infrastructure setups. The build strategy determines where and how your Docker images are built.
+
+## Build Strategy Overview
+
+<CardGroup cols={2}>
+  <Card title="Local" icon="laptop">
+    Build images on your local machine using Docker
+  </Card>
+  <Card title="Remote" icon="server">
+    Build images on a dedicated remote builder server
+  </Card>
+  <Card title="Hybrid" icon="arrows-split-up-and-left">
+    Build some architectures locally, others remotely
+  </Card>
+  <Card title="Cloud" icon="cloud">
+    Use Docker's hosted build service
+  </Card>
+  <Card title="Pack" icon="box">
+    Build with Cloud Native Buildpacks
+  </Card>
+</CardGroup>
+
+## Local Builder
+
+The default strategy builds images on your local machine and pushes them to a registry.
+
+```yaml
+builder:
+  driver: docker-container  # Default
+  arch:
+    - amd64
+    - arm64
+```
+
+**Reference**: See `lib/kamal/commands/builder/local.rb` for implementation.
+
+### When to Use Local Building
+
+<Check>✓ You have a powerful development machine</Check>
+<Check>✓ You need to build multi-architecture images</Check>
+<Check>✓ You have fast internet for pushing images</Check>
+<Check>✓ You want the simplest setup</Check>
+
+### Local Builder Configuration
+
+<Tabs>
+  <Tab title="Single Architecture">
+    ```yaml
+    builder:
+      driver: docker
+      arch: amd64
+    ```
+    
+    Use the `docker` driver for single-architecture builds. This is faster but doesn't support multi-arch.
+    
+    **Reference**: See `lib/kamal/configuration/builder.rb:155-157` for driver validation.
+  </Tab>
+  
+  <Tab title="Multi-Architecture">
+    ```yaml
+    builder:
+      driver: docker-container
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    Use `docker-container` or `docker-buildx` driver for multi-architecture images.
+  </Tab>
+  
+  <Tab title="With Caching">
+    ```yaml
+    builder:
+      arch:
+        - amd64
+        - arm64
+      cache:
+        type: registry
+        image: my-app-build-cache
+    ```
+    
+    Enable layer caching to speed up subsequent builds.
+  </Tab>
+</Tabs>
+
+<Warning>
+The `docker` driver does not support:
+- Remote builders
+- Layer caching
+- Multiple architectures
+
+See `lib/kamal/configuration/builder.rb:161-165` for validation logic.
+</Warning>
+
+## Remote Builder
+
+Build images on a remote server via SSH. This is useful when your local machine is slow or when you need to build for architectures your local machine doesn't support.
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  arch:
+    - amd64
+    - arm64
+```
+
+**Reference**: See `lib/kamal/commands/builder/remote.rb` for implementation.
+
+### How Remote Building Works
+
+1. Kamal creates a Docker context pointing to your remote builder
+2. Creates a buildx builder using that context
+3. Builds are executed on the remote server
+4. Built images are pushed directly to your registry from the remote server
+
+**Reference**: See `lib/kamal/commands/builder/remote.rb:60-74` for context creation.
+
+### Remote Builder Setup
+
+<Steps>
+  <Step title="Configure SSH Access">
+    Ensure you can SSH to the builder server:
+    ```bash
+    ssh user@builder.example.com
+    ```
+  </Step>
+  
+  <Step title="Install Docker">
+    The remote server needs Docker installed:
+    ```bash
+    docker version
+    ```
+  </Step>
+  
+  <Step title="Configure Kamal">
+    ```yaml
+    builder:
+      remote: ssh://user@builder.example.com
+    ```
+  </Step>
+  
+  <Step title="Test the Builder">
+    ```bash
+    kamal builder info
+    ```
+  </Step>
+</Steps>
+
+### Remote Builder Benefits
+
+<Check>✓ Offload CPU-intensive builds from your local machine</Check>
+<Check>✓ Faster image pushes (remote builder → registry is often faster)</Check>
+<Check>✓ Build for architectures not available locally</Check>
+<Check>✓ Consistent build environment</Check>
+
+## Hybrid Builder
+
+Build some architectures locally and others remotely. This is the most flexible strategy, allowing you to build natively for your local architecture while offloading others.
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  arch:
+    - amd64  # Built locally if you're on amd64
+    - arm64  # Built remotely if you're not on arm64
+```
+
+**Reference**: See `lib/kamal/commands/builder/hybrid.rb` for implementation.
+
+### How Hybrid Building Works
+
+Kamal automatically determines which architectures to build locally vs. remotely:
+
+- **Local arches**: Architectures matching your local machine's architecture
+- **Remote arches**: All other architectures
+
+**Reference**: See `lib/kamal/configuration/builder.rb:26-46` for architecture splitting logic.
+
+<CodeGroup>
+```yaml Local: amd64, Remote: arm64
+# When running on an amd64 machine
+builder:
+  remote: ssh://user@arm-builder.example.com
+  arch:
+    - amd64  # Built locally
+    - arm64  # Built remotely
+```
+
+```yaml Local: arm64, Remote: amd64
+# When running on an arm64 machine (M1/M2 Mac)
+builder:
+  remote: ssh://user@amd-builder.example.com
+  arch:
+    - amd64  # Built remotely
+    - arm64  # Built locally
+```
+</CodeGroup>
+
+### Hybrid Builder Setup
+
+**Reference**: See `lib/kamal/commands/builder/hybrid.rb:14-20` for buildx configuration.
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  arch:
+    - amd64
+    - arm64
+  cache:
+    type: registry
+```
+
+The hybrid builder:
+1. Creates a local buildx builder for local architectures
+2. Creates a remote context for the remote builder
+3. Appends the remote builder to the same buildx instance
+4. Builds both architectures in a single `docker buildx build` command
+
+## Cloud Builder
+
+Use Docker's hosted build service (Docker Build Cloud) for building images.
+
+```yaml
+builder:
+  driver: cloud <org-name>/<builder-name>
+```
+
+**Reference**: See `lib/kamal/commands/builder/cloud.rb` for implementation.
+
+### Cloud Builder Setup
+
+<Steps>
+  <Step title="Sign up for Docker Build Cloud">
+    Visit [Docker Build Cloud](https://docker.com/products/build-cloud/)
+  </Step>
+  
+  <Step title="Create a Builder">
+    Create a builder in your Docker organization
+  </Step>
+  
+  <Step title="Configure Kamal">
+    ```yaml
+    builder:
+      driver: cloud myorg/mybuilder
+    ```
+  </Step>
+</Steps>
+
+### Cloud Builder Benefits
+
+<Check>✓ No infrastructure to manage</Check>
+<Check>✓ Fast builds with powerful cloud resources</Check>
+<Check>✓ Shared build cache across team members</Check>
+<Check>✓ Support for all architectures</Check>
+
+## Pack (Buildpacks)
+
+Use Cloud Native Buildpacks to build images without writing Dockerfiles.
+
+```yaml
+builder:
+  pack:
+    builder: heroku/builder:22
+    buildpacks:
+      - heroku/ruby
+```
+
+**Reference**: See `lib/kamal/commands/builder/pack.rb` for implementation.
+
+### When to Use Buildpacks
+
+<Check>✓ You don't want to maintain Dockerfiles</Check>
+<Check>✓ Your language/framework has good buildpack support</Check>
+<Check>✓ You want automatic dependency detection</Check>
+<Check>✓ You prefer convention over configuration</Check>
+
+### Pack Builder Configuration
+
+```yaml
+builder:
+  pack:
+    builder: heroku/builder:22
+    buildpacks:
+      - heroku/ruby
+      - heroku/nodejs
+  args:
+    RUBY_VERSION: 3.2.2
+```
+
+**Reference**: See `lib/kamal/commands/builder/pack.rb:16-28` for pack build implementation.
+
+<Note>
+Buildpacks automatically add a `service` label to images, which Kamal requires for validation.
+
+See `lib/kamal/commands/builder/pack.rb:25` for label injection.
+</Note>
+
+## Build Options
+
+All build strategies support these common options:
+
+### Dockerfile and Context
+
+```yaml
+builder:
+  dockerfile: Dockerfile.production
+  context: ./app
+  target: production
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:76-86` for build context configuration.
+
+### Build Arguments
+
+```yaml
+builder:
+  args:
+    RUBY_VERSION: 3.2.2
+    NODE_VERSION: 18
+    RAILS_ENV: production
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:68-70` for build args.
+
+### Build Secrets
+
+```yaml
+builder:
+  secrets:
+    - GITHUB_TOKEN
+    - NPM_TOKEN
+```
+
+Secrets are loaded from `.kamal/secrets` and passed as build secrets (not as build args, so they don't end up in image layers).
+
+**Reference**: See `lib/kamal/configuration/builder.rb:72-74` for secrets handling.
+
+### SSH Agent Forwarding
+
+```yaml
+builder:
+  ssh: default
+```
+
+Forward your SSH agent to the build for private Git dependencies.
+
+**Reference**: See `lib/kamal/configuration/builder.rb:126-128` for SSH configuration.
+
+### Build Cache
+
+<Tabs>
+  <Tab title="Registry Cache">
+    ```yaml
+    builder:
+      cache:
+        type: registry
+        image: my-app-build-cache
+        options: mode=max
+    ```
+    
+    Store build cache in a registry image.
+    
+    **Reference**: See `lib/kamal/configuration/builder.rb:191-200` for registry cache.
+  </Tab>
+  
+  <Tab title="GitHub Actions Cache">
+    ```yaml
+    builder:
+      cache:
+        type: gha
+        options: scope=main
+    ```
+    
+    Use GitHub Actions cache for CI/CD builds.
+    
+    **Reference**: See `lib/kamal/configuration/builder.rb:184-196` for GHA cache.
+  </Tab>
+</Tabs>
+
+## Disabling Local Builds
+
+Force all builds to happen remotely:
+
+```yaml
+builder:
+  remote: ssh://user@builder.example.com
+  local: false
+```
+
+**Reference**: See `lib/kamal/configuration/builder.rb:100-102` for local build disabling.
+
+## Comparing Build Strategies
+
+| Strategy | Speed | Setup | Multi-Arch | Use Case |
+|----------|-------|-------|------------|----------|
+| Local | Fast | Easy | Yes | Development, small teams |
+| Remote | Medium | Medium | Yes | Slow local machines |
+| Hybrid | Fast | Medium | Yes | Best of both worlds |
+| Cloud | Fast | Easy | Yes | Enterprise, teams |
+| Pack | Medium | Easy | Limited | No Dockerfile |
+
+## Builder Commands
+
+```bash
+# Show builder info
+kamal builder info
+
+# Create/setup builder
+kamal builder create
+
+# Remove builder
+kamal builder remove
+
+# Build and push without deploying
+kamal build push
+
+# Force rebuild without cache
+kamal build push --no-cache
+```

@@ -1,0 +1,436 @@
+---
+title: Builder Configuration
+description: Configure Docker image building for your application
+---
+
+The builder configuration controls how Kamal builds your Docker images using `docker build`.
+
+## Basic Configuration
+
+```yaml
+builder:
+  arch: amd64
+```
+
+All builder options are specified under the `builder` key in the root configuration.
+
+## Architecture
+
+Specify which CPU architectures to build for:
+
+<ParamField path="arch" type="string | array" default="[amd64, arm64]">
+  The architectures to build for. Can be a single value or an array.
+  
+  Allowed values: `amd64`, `arm64`
+</ParamField>
+
+<Tabs>
+  <Tab title="Single Architecture">
+    ```yaml
+    builder:
+      arch: amd64
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Architectures">
+    ```yaml
+    builder:
+      arch:
+        - amd64
+        - arm64
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+With the default `docker-container` driver, Kamal builds for both `amd64` and `arm64` unless specified. The `docker` driver only builds for the local architecture.
+</Note>
+
+## Remote Builder
+
+Use a remote server for builds that don't match your local architecture:
+
+<ParamField path="remote" type="string">
+  SSH connection string for a remote builder.
+  
+  Format: `ssh://user@host` or `ssh://user@host:port`
+</ParamField>
+
+```yaml
+builder:
+  arch:
+    - amd64
+    - arm64
+  remote: ssh://docker@builder.example.com
+```
+
+Kamal will build locally for architectures matching your machine and remotely for others.
+
+<Warning>
+When using a local registry with a remote builder, you must use an SSH URL format.
+</Warning>
+
+### Disable Local Builds
+
+<ParamField path="local" type="boolean" default="true">
+  If `false`, always use the remote builder even for local architecture.
+</ParamField>
+
+```yaml
+builder:
+  arch: amd64
+  remote: ssh://docker@builder.example.com
+  local: false  # Always build remotely
+```
+
+## Build Context
+
+<ParamField path="context" type="string">
+  Build context directory. If not set, Kamal creates a clean Git clone.
+</ParamField>
+
+```yaml
+builder:
+  context: .  # Use local checkout instead of Git clone
+```
+
+**Default behavior (no context set):**
+- Kamal creates a temporary Git clone of your repository
+- Ensures a clean build with no uncommitted changes
+- Build happens from the cloned directory
+
+**With `context: .`:**
+- Uses your local checkout
+- Includes uncommitted changes
+- Faster for development builds
+
+## Dockerfile
+
+<ParamField path="dockerfile" type="string" default="Dockerfile">
+  Path to the Dockerfile to use for building.
+</ParamField>
+
+```yaml
+builder:
+  dockerfile: Dockerfile.production
+```
+
+## Build Target
+
+<ParamField path="target" type="string">
+  Build a specific target from a multi-stage Dockerfile.
+</ParamField>
+
+```yaml
+builder:
+  target: production
+```
+
+Example Dockerfile:
+
+```dockerfile
+FROM ruby:3.2-slim AS base
+# ...
+
+FROM base AS development
+# Development dependencies
+
+FROM base AS production
+# Production optimizations
+```
+
+## Build Arguments
+
+<ParamField path="args" type="object">
+  Build arguments passed to Docker with `--build-arg`.
+</ParamField>
+
+```yaml
+builder:
+  args:
+    RUBY_VERSION: 3.2.0
+    RAILS_ENV: production
+    NODE_VERSION: <%= ENV['NODE_VERSION'] || '18' %>
+```
+
+Reference in Dockerfile:
+
+```dockerfile
+ARG RUBY_VERSION
+FROM ruby:${RUBY_VERSION}-slim
+
+ARG RAILS_ENV
+ENV RAILS_ENV=${RAILS_ENV}
+```
+
+## Build Secrets
+
+<ParamField path="secrets" type="array">
+  Secret keys from `.kamal/secrets` to expose during build.
+</ParamField>
+
+```yaml
+builder:
+  secrets:
+    - GITHUB_TOKEN
+    - NPM_TOKEN
+```
+
+Secrets are read from `.kamal/secrets` and mounted at build time:
+
+```dockerfile
+# Access secret during build (not persisted in image)
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+  BUNDLE_GITHUB__COM=x-access-token:$(cat /run/secrets/GITHUB_TOKEN) \
+  bundle install && \
+  rm -rf /usr/local/bundle/cache
+```
+
+<Note>
+Secrets are not included in the final image layers.
+</Note>
+
+## SSH
+
+<ParamField path="ssh" type="string">
+  SSH agent socket or keys to expose to the build.
+</ParamField>
+
+```yaml
+builder:
+  ssh: default=$SSH_AUTH_SOCK
+```
+
+Use in Dockerfile to clone private repositories:
+
+```dockerfile
+RUN --mount=type=ssh \
+  git clone git@github.com:private/repo.git
+```
+
+## Build Cache
+
+<ParamField path="cache" type="object">
+  Configure build caching to speed up builds.
+</ParamField>
+
+### Registry Cache
+
+Store cache in a container registry:
+
+```yaml
+builder:
+  cache:
+    type: registry
+    options: mode=max
+    image: my-app-build-cache
+```
+
+<ParamField path="cache.type" type="string">
+  Cache type: `registry` or `gha` (GitHub Actions)
+</ParamField>
+
+<ParamField path="cache.image" type="string">
+  Image name for cache (registry type only). Defaults to `<image>-build-cache`.
+</ParamField>
+
+<ParamField path="cache.options" type="string">
+  Cache options passed to Docker. Common: `mode=max` for maximum caching.
+</ParamField>
+
+### GitHub Actions Cache
+
+```yaml
+builder:
+  cache:
+    type: gha
+    options: mode=max,scope=main
+```
+
+## Build Driver
+
+<ParamField path="driver" type="string" default="docker-container">
+  The build driver to use.
+</ParamField>
+
+<Tabs>
+  <Tab title="docker-container (default)">
+    ```yaml
+    builder:
+      driver: docker-container
+    ```
+    
+    - Supports multi-architecture builds
+    - Supports build cache
+    - Supports remote builders
+  </Tab>
+  
+  <Tab title="docker">
+    ```yaml
+    builder:
+      driver: docker
+    ```
+    
+    - Uses Docker daemon directly
+    - Only builds for local architecture
+    - No cache or remote builder support
+  </Tab>
+  
+  <Tab title="Docker Build Cloud">
+    ```yaml
+    builder:
+      driver: cloud org-name/builder-name
+    ```
+    
+    Uses [Docker Build Cloud](https://www.docker.com/products/build-cloud/) for managed builds.
+  </Tab>
+</Tabs>
+
+<Warning>
+The `docker` driver does not support:
+- Remote builders
+- Build caching
+- Multiple architectures
+</Warning>
+
+## Cloud Native Buildpacks
+
+<ParamField path="pack" type="object">
+  Use Cloud Native Buildpacks instead of Dockerfile.
+</ParamField>
+
+```yaml
+builder:
+  pack:
+    builder: heroku/builder:24
+    buildpacks:
+      - heroku/ruby
+      - heroku/nodejs
+```
+
+<ParamField path="pack.builder" type="string" required>
+  The buildpack builder to use.
+</ParamField>
+
+<ParamField path="pack.buildpacks" type="array">
+  List of buildpacks to apply.
+</ParamField>
+
+For additional customization, create a `project.toml` file. See [Buildpacks documentation](https://buildpacks.io/docs/for-app-developers/how-to/build-inputs/use-project-toml/).
+
+## Attestations
+
+### Provenance
+
+<ParamField path="provenance" type="string | boolean">
+  Configure provenance attestations for the build.
+</ParamField>
+
+```yaml
+builder:
+  provenance: mode=max
+  # or simply:
+  provenance: true
+```
+
+### SBOM (Software Bill of Materials)
+
+<ParamField path="sbom" type="string | boolean">
+  Configure SBOM generation for the build.
+</ParamField>
+
+```yaml
+builder:
+  sbom: true
+```
+
+## Complete Examples
+
+<Accordion title="Production Build with Secrets">
+```yaml
+builder:
+  arch: amd64
+  dockerfile: Dockerfile.production
+  target: production
+  
+  args:
+    RUBY_VERSION: 3.2.0
+    RAILS_ENV: production
+  
+  secrets:
+    - GITHUB_TOKEN
+    - BUNDLE_ENTERPRISE__CONTRIBSYS__COM
+  
+  cache:
+    type: registry
+    options: mode=max
+    image: my-app-build-cache
+```
+</Accordion>
+
+<Accordion title="Multi-Architecture with Remote Builder">
+```yaml
+builder:
+  arch:
+    - amd64
+    - arm64
+  
+  remote: ssh://docker@arm-builder.example.com
+  
+  cache:
+    type: registry
+    options: mode=max
+  
+  args:
+    RUBY_VERSION: <%= ENV['RUBY_VERSION'] || '3.2.0' %>
+```
+</Accordion>
+
+<Accordion title="GitHub Actions Build">
+```yaml
+builder:
+  context: .  # Use checkout, not git clone
+  
+  cache:
+    type: gha
+    options: mode=max,scope=${{ github.ref_name }}
+  
+  provenance: mode=max
+  sbom: true
+```
+</Accordion>
+
+<Accordion title="Cloud Native Buildpacks">
+```yaml
+builder:
+  pack:
+    builder: heroku/builder:24
+    buildpacks:
+      - heroku/ruby
+      - heroku/nodejs
+      - heroku/procfile
+  
+  cache:
+    type: registry
+```
+</Accordion>
+
+## Building Images
+
+Build your image with:
+
+```bash
+# Build and push
+kamal build push
+
+# Build without pushing
+kamal build create
+
+# Pull the built image
+kamal build pull
+```
+
+## Related Configuration
+
+- [Registry Configuration](/configuration/registry) - Configure where images are pushed
+- [Environment Variables](/configuration/environment) - Set build-time environment variables

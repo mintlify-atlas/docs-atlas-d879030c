@@ -1,0 +1,328 @@
+---
+title: kamal build pull
+description: Pull app image from registry to application servers
+---
+
+The `kamal build pull` command pulls your application's Docker image from the registry to all configured application servers.
+
+## Usage
+
+```bash
+kamal build pull
+```
+
+## What It Does
+
+The `build pull` command distributes your pre-built Docker image to all application servers:
+
+<Steps>
+  <Step title="Registry Login">
+    Logs into the container registry on all application servers (skipped for local registries)
+    
+    Reference: `lib/kamal/cli/build.rb:71`
+  </Step>
+  
+  <Step title="Port Forwarding Setup">
+    If using a local registry, sets up SSH port forwarding to allow servers to access it
+    
+    Reference: `lib/kamal/cli/build.rb:73`
+  </Step>
+  
+  <Step title="Mirror Seeding">
+    Identifies registry mirrors and pulls to one host per mirror first to seed the cache
+    
+    Reference: `lib/kamal/cli/build.rb:74-79`
+  </Step>
+  
+  <Step title="Parallel Distribution">
+    Pulls the image to all remaining servers in parallel
+    
+    Reference: `lib/kamal/cli/build.rb:79-82`
+  </Step>
+  
+  <Step title="Image Validation">
+    Validates that each pulled image has the correct service label
+    
+    Reference: `lib/kamal/cli/build.rb:193`
+  </Step>
+</Steps>
+
+## When to Use
+
+Use `kamal build pull` when you:
+
+<Check>✓ Already built and pushed an image with `kamal build push`</Check>
+<Check>✓ Want to pre-warm servers with a new image before deploying</Check>
+<Check>✓ Need to re-pull an image after a failed deployment</Check>
+<Check>✓ Want to distribute an image without rebuilding</Check>
+
+<Info>
+This command only pulls the image; it doesn't build, push, or deploy. Use `kamal build deliver` to build, push, and pull in one command.
+</Info>
+
+## Pull Process
+
+Kamal optimizes the pull process for large deployments:
+
+### 1. Registry Mirrors Detection
+
+Kamal automatically detects Docker registry mirrors configured on your servers:
+
+```bash
+$ docker system info | grep "Registry Mirrors"
+ Registry Mirrors:
+  https://mirror.gcr.io/
+```
+
+Reference: `lib/kamal/cli/build.rb:173-186`
+
+### 2. Mirror Seeding Strategy
+
+When mirrors are detected:
+
+<Tabs>
+  <Tab title="With Mirrors">
+    1. **Identify mirror groups**: Runs `docker system info` on each host
+    2. **Select seed hosts**: Picks one host per unique mirror
+    3. **Seed pulls**: Pulls to seed hosts first (sequential)
+    4. **Parallel pulls**: Pulls to remaining hosts (parallel)
+    
+    This ensures mirrors are populated before other hosts pull, reducing bandwidth and registry load.
+    
+    Reference: `lib/kamal/cli/build.rb:76-79`
+  </Tab>
+  
+  <Tab title="Without Mirrors">
+    1. **Direct parallel pulls**: All hosts pull directly from the registry in parallel
+    
+    Reference: `lib/kamal/cli/build.rb:81-82`
+  </Tab>
+</Tabs>
+
+### 3. Image Operations Per Host
+
+<Steps>
+  <Step title="Audit Record">
+    Records the pull operation with the image version
+    
+    ```bash
+    echo "[Pulled image with version abc123]" | ...audit.sh
+    ```
+    
+    Reference: `lib/kamal/cli/build.rb:190`
+  </Step>
+  
+  <Step title="Clean Old Images">
+    Removes unused old images to free space (best effort, errors ignored)
+    
+    Reference: `lib/kamal/cli/build.rb:191`
+  </Step>
+  
+  <Step title="Pull Image">
+    Executes `docker pull` for the application image
+    
+    Reference: `lib/kamal/cli/build.rb:192`
+  </Step>
+  
+  <Step title="Validate Image">
+    Checks that the image has the required `service` label
+    
+    Reference: `lib/kamal/cli/build.rb:193`
+  </Step>
+</Steps>
+
+## Local Registry Support
+
+Kamal supports pulling from a local registry with automatic port forwarding:
+
+```yaml
+registry:
+  server: localhost:5000
+  local:
+    arch: amd64
+    host: 192.168.1.100
+    port: 5000
+```
+
+When pulling:
+
+1. **Port forwarding setup**: Kamal forwards the local registry port to each server via SSH
+2. **Pull operation**: Servers access the registry through the forwarded port
+3. **Cleanup**: Port forwarding is closed after the pull completes
+
+Reference: `lib/kamal/cli/build.rb:222-228`
+
+<Warning>
+Local registry requires SSH access and works best for development or small deployments. Use a cloud registry for production.
+</Warning>
+
+## Example Output
+
+```bash
+$ kamal build pull
+  INFO [a1b2c3d4] Running /usr/bin/env docker login -u myuser on web-1
+  INFO [a1b2c3d4] Finished in 0.456s
+  INFO Pulling image on web-1 to seed the mirror...
+  INFO [e5f6g7h8] Running docker pull myapp:abc123 on web-1
+  INFO [e5f6g7h8] Finished in 12.345s
+  INFO Pulling image on remaining hosts...
+  INFO [i9j0k1l2] Running docker pull myapp:abc123 on web-2
+  INFO [m3n4o5p6] Running docker pull myapp:abc123 on web-3
+  INFO [q7r8s9t0] Running docker pull myapp:abc123 on web-4
+  INFO [i9j0k1l2] Finished in 3.456s
+  INFO [m3n4o5p6] Finished in 3.567s
+  INFO [q7r8s9t0] Finished in 3.678s
+```
+
+## Performance Optimization
+
+### Registry Mirrors
+
+Configure Docker registry mirrors on your servers for faster pulls:
+
+```json
+// /etc/docker/daemon.json
+{
+  "registry-mirrors": [
+    "https://mirror.gcr.io",
+    "https://your-mirror.example.com"
+  ]
+}
+```
+
+Benefits:
+- **Reduced bandwidth**: Pulls from geographically closer mirrors
+- **Faster speeds**: Mirrors cache frequently-pulled layers
+- **Lower costs**: Fewer pulls from the origin registry
+
+### Parallel Execution
+
+Kamal pulls to multiple servers simultaneously:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 10.0.1.1
+      - 10.0.1.2
+      - 10.0.1.3
+      - 10.0.1.4  # All pull in parallel
+```
+
+With 10 servers and a 5-minute pull time, the total time is ~5 minutes (not 50 minutes).
+
+### Image Cleanup
+
+Kamal automatically cleans old images to prevent disk space issues:
+
+```bash
+# Removes old versions of the app image
+docker image prune -f --filter label=service=myapp
+```
+
+Reference: `lib/kamal/cli/build.rb:191`
+
+## Configuration
+
+The pull behavior is affected by these configurations:
+
+```yaml
+# Which servers to pull to
+servers:
+  web:
+    hosts:
+      - 10.0.1.1
+      - 10.0.1.2
+  workers:
+    hosts:
+      - 10.0.2.1
+
+# Registry configuration
+registry:
+  server: registry.example.com
+  username: myuser
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# SSH configuration
+ssh:
+  user: deploy
+  keys:
+    - ~/.ssh/id_rsa
+```
+
+## Related Commands
+
+- [`kamal build push`](/commands/build/push) - Build and push image to registry
+- [`kamal build deliver`](/commands/build/deliver) - Build, push, and pull in one command
+- [`kamal deploy`](/commands/deploy) - Full deployment including pull and start
+- [`kamal app exec`](/commands/app/exec) - Execute commands to verify the pulled image
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Pull fails: unauthorized">
+    Check registry credentials on servers:
+    
+    ```bash
+    kamal app exec 'docker login registry.example.com'
+    ```
+    
+    Ensure `.kamal/secrets` has the correct registry password.
+  </Accordion>
+  
+  <Accordion title="Pull times out">
+    Large images may take time to pull. Check:
+    
+    - Network connectivity between servers and registry
+    - Image size (use `docker images` locally)
+    - Available bandwidth
+    
+    Consider using registry mirrors or optimizing your image size.
+  </Accordion>
+  
+  <Accordion title="Mirror seeding fails">
+    If mirror detection fails:
+    
+    ```bash
+    kamal app exec 'docker system info | grep -A 5 "Registry Mirrors"'
+    ```
+    
+    Verify mirrors are configured correctly in `/etc/docker/daemon.json`.
+  </Accordion>
+  
+  <Accordion title="Image validation fails">
+    The pulled image must have a `service` label:
+    
+    ```dockerfile
+    LABEL service="myapp"
+    ```
+    
+    Kamal adds this automatically when building. If you're using a manually-built image, add the label.
+  </Accordion>
+  
+  <Accordion title="Local registry: connection refused">
+    For local registries, ensure:
+    
+    1. Registry is running on the configured host/port
+    2. SSH access to servers is working
+    3. Port forwarding is not blocked by firewalls
+    
+    Test SSH connectivity:
+    ```bash
+    ssh deploy@server "echo success"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<Check>✓ **Pre-pull before deployment**: Use `build pull` to warm servers before `kamal deploy`</Check>
+<Check>✓ **Use registry mirrors**: Configure mirrors for faster pulls</Check>
+<Check>✓ **Monitor disk space**: Ensure servers have enough space for images</Check>
+<Check>✓ **Test pull times**: Measure pull duration in your environment</Check>
+<Check>✓ **Optimize image size**: Smaller images pull faster and use less disk</Check>
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:69-84`, `lib/kamal/cli/build.rb:188-195`

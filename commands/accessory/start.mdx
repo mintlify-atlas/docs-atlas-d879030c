@@ -1,0 +1,276 @@
+---
+title: kamal accessory start
+description: Start an existing stopped accessory container
+---
+
+The `kamal accessory start` command starts a previously stopped accessory container. This is useful for temporarily stopping and restarting accessories without recreating the container.
+
+## Basic Usage
+
+```bash
+kamal accessory start <NAME>
+```
+
+### Start a Database
+
+```bash
+kamal accessory start mysql
+```
+
+<Note>
+The container must already exist. Use [`kamal accessory boot`](/commands/accessory/boot) to create a new container.
+</Note>
+
+## What Start Does
+
+The start command performs these operations:
+
+<Steps>
+  <Step title="Start Container">
+    Executes `docker start` on the existing container.
+  </Step>
+  
+  <Step title="Update Audit Log">
+    Records the start action in the audit log.
+  </Step>
+  
+  <Step title="Configure Proxy (if applicable)">
+    If the accessory uses kamal-proxy, updates the proxy routes.
+  </Step>
+</Steps>
+
+## Start vs. Boot vs. Reboot
+
+| Command | Creates Container | Updates Image | Updates Config | Downtime |
+|---------|------------------|---------------|----------------|----------|
+| `start` | No (uses existing) | No | No | Minimal |
+| `boot` | Yes (new container) | Yes | Yes | Full boot time |
+| `reboot` | Yes (recreates) | Yes | Yes | Full reboot time |
+
+<Info>
+Use `start` for the fastest recovery after a [`stop`](/commands/accessory/stop) operation.
+</Info>
+
+## Examples
+
+### Stop and Start for Maintenance
+
+<Tabs>
+  <Tab title="Scenario">
+    You need to perform host maintenance:
+    
+    ```bash
+    # Stop accessory before maintenance
+    kamal accessory stop redis
+    
+    # Perform maintenance on host
+    # ...
+    
+    # Start accessory after maintenance
+    kamal accessory start redis
+    ```
+  </Tab>
+  
+  <Tab title="Output">
+    ```text
+    INFO [abc123] Running docker start myapp-redis on 192.168.0.11...
+    INFO Started redis accessory
+    ```
+  </Tab>
+</Tabs>
+
+### Start After Proxy Configuration Change
+
+<CodeGroup>
+```yaml Updated Proxy Config
+accessories:
+  adminer:
+    image: adminer:latest
+    host: 192.168.0.10
+    
+    proxy:
+      host: db-admin.example.com
+      ssl: true
+      app_port: 8080
+      # Updated buffering settings
+      buffering:
+        requests: true
+        responses: true
+```
+
+```bash Commands
+kamal accessory stop adminer
+kamal accessory start adminer
+# Proxy routes are reconfigured on start
+```
+</CodeGroup>
+
+### Start Multiple Accessories
+
+If you stopped multiple accessories:
+
+```bash
+# Start them individually
+kamal accessory start mysql
+kamal accessory start redis
+kamal accessory start memcached
+```
+
+<Note>
+There's no `start all` option. You must start each accessory individually or use a shell loop.
+</Note>
+
+## When to Use Start
+
+### After Stopping for Maintenance
+
+The most common use case:
+
+```bash
+# Stop for backup
+kamal accessory stop postgres
+
+# Perform backup
+ssh user@host "pg_dump ..."
+
+# Resume service
+kamal accessory start postgres
+```
+
+### After Host Reboot
+
+If Docker containers don't auto-restart:
+
+```bash
+# After host comes back online
+kamal accessory start mysql
+kamal accessory start redis
+```
+
+<Info>
+Consider using `restart: unless-stopped` in Docker options to auto-start containers after host reboot.
+</Info>
+
+### Quick Recovery from Issues
+
+Sometimes a simple stop/start resolves issues:
+
+```bash
+kamal accessory stop redis
+kamal accessory start redis
+# Or use restart for both in one command
+```
+
+## Working with Proxy
+
+When starting an accessory that runs behind kamal-proxy:
+
+```yaml deploy.yml
+accessories:
+  web-ui:
+    image: adminer:latest
+    host: 192.168.0.10
+    proxy:
+      host: admin.example.com
+      ssl: true
+      app_port: 8080
+```
+
+```bash
+kamal accessory start web-ui
+# Automatically reconfigures proxy routes
+```
+
+The start command:
+1. Starts the container
+2. Gets the container ID
+3. Updates kamal-proxy with the new target
+
+## Implementation Details
+
+From `accessory.rb:92-106`:
+
+```ruby
+def start(name)
+  with_lock do
+    with_accessory(name) do |accessory, hosts|
+      on(hosts) do
+        execute *KAMAL.auditor.record("Started #{name} accessory"), verbosity: :debug
+        execute *accessory.start
+        
+        if accessory.running_proxy?
+          target = capture_with_info(*accessory.container_id_for(container_name: accessory.service_name, only_running: true)).strip
+          execute *accessory.deploy(target: target)
+        end
+      end
+    end
+  end
+end
+```
+
+## Troubleshooting
+
+### Container Doesn't Exist
+
+```text
+Error: No such container: myapp-mysql
+```
+
+**Solution**: Use boot instead:
+
+```bash
+kamal accessory boot mysql
+```
+
+### Container Won't Start
+
+```bash
+# Check why it stopped
+kamal accessory logs mysql --lines 50
+
+# Check container details
+kamal accessory details mysql
+
+# If configuration issue, use reboot
+kamal accessory reboot mysql
+```
+
+### Port Already in Use
+
+```text
+Error: port is already allocated
+```
+
+**Solution**: Check for conflicting services:
+
+```bash
+ssh user@host "netstat -tulpn | grep 3306"
+
+# Or use a different port in configuration
+```
+
+### Proxy Not Updating
+
+```bash
+# Manually check proxy status
+kamal proxy details
+
+# Restart proxy if needed
+kamal proxy reboot
+
+# Then start accessory again
+kamal accessory start web-ui
+```
+
+## Related Commands
+
+- [`kamal accessory stop`](/commands/accessory/stop) - Stop running container
+- [`kamal accessory restart`](/commands/accessory/restart) - Stop and start in one command
+- [`kamal accessory boot`](/commands/accessory/boot) - Create and start new container
+- [`kamal accessory reboot`](/commands/accessory/reboot) - Recreate and start container
+- [`kamal accessory details`](/commands/accessory/details) - Check container status
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Docker Options](/configuration/accessories#docker-options) - Configure restart policies

@@ -1,0 +1,522 @@
+---
+title: kamal build details
+description: Show information about the current builder setup
+---
+
+The `kamal build details` command displays detailed information about your Docker buildx builder configuration and status.
+
+## Usage
+
+```bash
+kamal build details
+```
+
+## What It Shows
+
+The command displays:
+
+<CardGroup cols={2}>
+  <Card title="Builder Name" icon="tag">
+    The name of the buildx builder Kamal is using
+  </Card>
+  <Card title="Driver" icon="gear">
+    The build driver (docker-container, docker, cloud, etc.)
+  </Card>
+  <Card title="Platforms" icon="microchip">
+    Supported CPU architectures (amd64, arm64)
+  </Card>
+  <Card title="Nodes" icon="server">
+    Builder nodes (local, remote, or both)
+  </Card>
+  <Card title="Status" icon="circle-check">
+    Whether the builder is running, inactive, or error state
+  </Card>
+  <Card title="Endpoints" icon="link">
+    Connection endpoints for each node
+  </Card>
+</CardGroup>
+
+## Example Output
+
+<Tabs>
+  <Tab title="Local Builder">
+    ```bash
+    $ kamal build details
+    Builder: local
+    Name:          kamal-myapp-local
+    Driver:        docker-container
+    Last Activity: 2026-03-11 09:45:23 +0000 UTC
+
+    Nodes:
+    Name:      kamal-myapp-local0
+    Endpoint:  unix:///var/run/docker.sock
+    Status:    running
+    Buildkit:  v0.12.5
+    Platforms: linux/amd64, linux/arm64
+    ```
+  </Tab>
+  
+  <Tab title="Remote Builder">
+    ```bash
+    $ kamal build details
+    Builder: remote
+    Name:          kamal-myapp-remote
+    Driver:        docker-container
+    Last Activity: 2026-03-11 09:45:23 +0000 UTC
+
+    Nodes:
+    Name:      kamal-myapp-remote0
+    Endpoint:  ssh://docker@builder.example.com
+    Status:    running
+    Buildkit:  v0.12.5
+    Platforms: linux/amd64, linux/arm64
+    ```
+  </Tab>
+  
+  <Tab title="Hybrid Builder">
+    ```bash
+    $ kamal build details
+    Builder: hybrid
+    Name:          kamal-myapp-hybrid
+    Driver:        docker-container
+    Last Activity: 2026-03-11 09:45:23 +0000 UTC
+
+    Nodes:
+    Name:      kamal-myapp-hybrid0
+    Endpoint:  unix:///var/run/docker.sock
+    Status:    running
+    Buildkit:  v0.12.5
+    Platforms: linux/amd64
+
+    Name:      kamal-myapp-hybrid1
+    Endpoint:  ssh://docker@builder.example.com
+    Status:    running
+    Buildkit:  v0.12.5
+    Platforms: linux/arm64
+    ```
+  </Tab>
+  
+  <Tab title="Cloud Builder">
+    ```bash
+    $ kamal build details
+    Builder: cloud
+    Name:          kamal-myapp-cloud
+    Driver:        cloud
+    Cloud:         myorg/mybuilder
+
+    Nodes:
+    Name:      cloud-myorg-mybuilder
+    Endpoint:  cloud://myorg/mybuilder
+    Status:    running
+    Platforms: linux/amd64, linux/arm64, linux/arm/v7, linux/arm/v6
+    ```
+  </Tab>
+  
+  <Tab title="Pack Builder">
+    ```bash
+    $ kamal build details
+    Builder: pack
+    Pack builder: heroku/builder:24
+    Buildpacks:
+      - heroku/ruby
+      - heroku/nodejs
+    ```
+  </Tab>
+</Tabs>
+
+## Information Displayed
+
+### Builder Name
+
+The buildx builder instance name that Kamal created:
+
+```
+Name: kamal-myapp-local
+```
+
+Naming pattern: `kamal-<service>-<type>`
+
+Reference: `lib/kamal/commands/builder.rb:15-17`
+
+### Driver Type
+
+The builder driver being used:
+
+<ParamField path="docker-container">
+  Default driver supporting multi-arch, caching, and remote builders
+</ParamField>
+
+<ParamField path="docker">
+  Simple driver using Docker daemon directly (single-arch only)
+</ParamField>
+
+<ParamField path="cloud">
+  Docker Build Cloud managed service
+</ParamField>
+
+Reference: `lib/kamal/configuration/builder.rb:89-90`
+
+### Platforms
+
+Supported CPU architectures:
+
+```
+Platforms: linux/amd64, linux/arm64
+```
+
+Based on your configuration:
+
+```yaml
+builder:
+  arch:
+    - amd64
+    - arm64
+```
+
+### Builder Status
+
+Each node shows its operational status:
+
+<ParamField path="running">
+  Builder is active and ready to build
+</ParamField>
+
+<ParamField path="inactive">
+  Builder exists but is not running
+</ParamField>
+
+<ParamField path="error">
+  Builder is in an error state and needs attention
+</ParamField>
+
+### Buildkit Version
+
+The version of BuildKit powering the builder:
+
+```
+Buildkit: v0.12.5
+```
+
+Newer versions support more features and performance improvements.
+
+## When to Use
+
+Use `kamal build details` to:
+
+<Check>✓ Verify builder configuration is correct</Check>
+<Check>✓ Check if builder is running and healthy</Check>
+<Check>✓ Confirm supported platforms match your needs</Check>
+<Check>✓ Troubleshoot build-related issues</Check>
+<Check>✓ Verify remote builder connectivity</Check>
+<Check>✓ Check BuildKit version for feature compatibility</Check>
+
+## Troubleshooting With Details
+
+### Diagnosing Builder Issues
+
+<Steps>
+  <Step title="Check Builder Exists">
+    ```bash
+    kamal build details
+    ```
+    
+    If you see "no builder found", create one:
+    ```bash
+    kamal build create
+    ```
+  </Step>
+  
+  <Step title="Verify Status">
+    Ensure status is "running":
+    
+    ```
+    Status: running ✓
+    ```
+    
+    If "inactive" or "error", recreate:
+    ```bash
+    kamal build remove
+    kamal build create
+    ```
+  </Step>
+  
+  <Step title="Check Platforms">
+    Verify platforms match your configuration:
+    
+    ```yaml
+    # config/deploy.yml
+    builder:
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    ```bash
+    # Should show both platforms
+    $ kamal build details
+    Platforms: linux/amd64, linux/arm64
+    ```
+  </Step>
+  
+  <Step title="Verify Endpoints">
+    For remote builders, check endpoint connectivity:
+    
+    ```
+    Endpoint: ssh://docker@builder.example.com
+    ```
+    
+    Test SSH:
+    ```bash
+    ssh docker@builder.example.com docker version
+    ```
+  </Step>
+</Steps>
+
+## Understanding Builder Types
+
+The builder type shown tells you which build strategy is active:
+
+<Tabs>
+  <Tab title="local">
+    Building on your local machine.
+    
+    **Characteristics:**
+    - Single endpoint (local Docker)
+    - Fast for native architecture
+    - Uses local resources
+    
+    Reference: `lib/kamal/commands/builder/local.rb`
+  </Tab>
+  
+  <Tab title="remote">
+    Building entirely on a remote server.
+    
+    **Characteristics:**
+    - Remote endpoint via SSH
+    - Offloads build from local machine
+    - Direct push from remote to registry
+    
+    Reference: `lib/kamal/commands/builder/remote.rb`
+  </Tab>
+  
+  <Tab title="hybrid">
+    Building some architectures locally, others remotely.
+    
+    **Characteristics:**
+    - Multiple nodes (local + remote)
+    - Optimal performance for each arch
+    - Best of both worlds
+    
+    Reference: `lib/kamal/commands/builder/hybrid.rb`
+  </Tab>
+  
+  <Tab title="cloud">
+    Using Docker Build Cloud.
+    
+    **Characteristics:**
+    - Managed cloud endpoint
+    - No infrastructure to maintain
+    - Shared build cache
+    
+    Reference: `lib/kamal/commands/builder/cloud.rb`
+  </Tab>
+  
+  <Tab title="pack">
+    Using Cloud Native Buildpacks.
+    
+    **Characteristics:**
+    - No Dockerfile required
+    - Automatic dependency detection
+    - Buildpack-driven builds
+    
+    Reference: `lib/kamal/commands/builder/pack.rb`
+  </Tab>
+</Tabs>
+
+## Comparing With Docker Commands
+
+You can also use Docker CLI directly:
+
+<CodeGroup>
+```bash Kamal Command
+kamal build details
+```
+
+```bash Docker Equivalent
+docker buildx ls
+docker buildx inspect kamal-myapp-local
+```
+</CodeGroup>
+
+The Kamal command provides a more focused view of your specific builder configuration.
+
+## Common Scenarios
+
+### Verify Multi-Arch Support
+
+```bash
+$ kamal build details | grep Platforms
+Platforms: linux/amd64, linux/arm64
+```
+
+If you only see one platform but configured multiple:
+
+```bash
+# Recreate builder
+kamal build remove
+kamal build create
+kamal build details
+```
+
+### Check Remote Builder Connectivity
+
+```bash
+$ kamal build details
+# Look for remote endpoint
+Endpoint: ssh://docker@builder.example.com
+Status: running
+```
+
+If status is not "running":
+
+```bash
+# Test SSH connection
+ssh docker@builder.example.com
+
+# Test Docker on remote
+ssh docker@builder.example.com docker version
+
+# Recreate if needed
+kamal build remove
+kamal build create
+```
+
+### Verify BuildKit Version
+
+```bash
+$ kamal build details | grep Buildkit
+Buildkit: v0.12.5
+```
+
+If you need a newer version:
+
+```bash
+# Update Docker on build machine
+sudo apt update && sudo apt upgrade docker-ce
+
+# Recreate builder
+kamal build remove
+kamal build create
+```
+
+## Related Commands
+
+- [`kamal build create`](/commands/build/create) - Create the builder
+- [`kamal build remove`](/commands/build/remove) - Remove the builder
+- [`kamal build push`](/commands/build/push) - Build and push an image
+- [`kamal config`](/commands/config) - Show full Kamal configuration
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'No builder found' error">
+    The builder hasn't been created yet:
+    
+    ```bash
+    $ kamal build details
+    ERROR: no builder "kamal-myapp-local" found
+    ```
+    
+    Create it:
+    ```bash
+    kamal build create
+    kamal build details
+    ```
+  </Accordion>
+  
+  <Accordion title="Status shows 'inactive'">
+    The builder exists but isn't running:
+    
+    ```bash
+    Status: inactive
+    ```
+    
+    Restart it:
+    ```bash
+    docker buildx inspect kamal-myapp-local --bootstrap
+    ```
+    
+    Or recreate:
+    ```bash
+    kamal build remove
+    kamal build create
+    ```
+  </Accordion>
+  
+  <Accordion title="Status shows 'error'">
+    The builder is in a failed state:
+    
+    ```bash
+    Status: error
+    ```
+    
+    Check logs:
+    ```bash
+    docker logs buildx_buildkit_kamal-myapp-local0
+    ```
+    
+    Usually recreating fixes it:
+    ```bash
+    kamal build remove
+    kamal build create
+    ```
+  </Accordion>
+  
+  <Accordion title="Missing expected platform">
+    If a platform is missing:
+    
+    ```bash
+    # Expected: linux/amd64, linux/arm64
+    # Got: linux/amd64
+    ```
+    
+    Check your configuration:
+    ```bash
+    kamal config
+    ```
+    
+    If config is correct, recreate builder:
+    ```bash
+    kamal build remove
+    kamal build create
+    kamal build details
+    ```
+  </Accordion>
+  
+  <Accordion title="Remote endpoint unreachable">
+    If remote builder shows connection issues:
+    
+    ```bash
+    Endpoint: ssh://docker@builder.example.com
+    Status: error
+    ```
+    
+    Test connectivity:
+    ```bash
+    ssh docker@builder.example.com echo "success"
+    ```
+    
+    Verify Docker is running:
+    ```bash
+    ssh docker@builder.example.com docker version
+    ```
+    
+    Check firewall rules and SSH configuration.
+  </Accordion>
+</AccordionGroup>
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:115-121`
+
+The details are fetched using the builder's `info` command, which delegates to the appropriate builder type (local, remote, hybrid, cloud, or pack).

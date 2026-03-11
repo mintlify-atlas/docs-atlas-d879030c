@@ -1,0 +1,124 @@
+---
+title: kamal app start
+description: Start existing app containers on servers
+---
+
+## Overview
+
+The `kamal app start` command starts existing app containers that have been stopped. Unlike `boot`, this command doesn't pull new images or create new containers - it simply starts containers that already exist.
+
+## Usage
+
+```bash
+kamal app start [OPTIONS]
+```
+
+## How It Works
+
+1. Starts the existing app container on each server
+2. If running with a proxy, retrieves the container endpoint and registers it with the proxy
+3. Records the start action in the audit log
+
+<Note>
+  This command requires that containers already exist on the servers. If no containers exist, use `kamal app boot` instead.
+</Note>
+
+## Options
+
+<ParamField path="--version" type="string">
+  Run commands against a specific app version
+  
+  ```bash
+  kamal app start --version v1.2.3
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Run commands on specific hosts instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app start --hosts web1.example.com,web2.example.com
+  kamal app start --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Run commands on specific roles instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app start --roles web
+  kamal app start --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean">
+  Run commands only on the primary host
+  
+  ```bash
+  kamal app start --primary
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app start --verbose
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal logging output
+  
+  ```bash
+  kamal app start --quiet
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Start all app containers
+kamal app start
+```
+
+```bash Start on specific hosts
+kamal app start --hosts web1.example.com
+```
+
+```bash Start specific role
+kamal app start --roles worker
+```
+
+```bash Start with verbose output
+kamal app start --verbose
+```
+
+</CodeGroup>
+
+## When to Use
+
+Use `kamal app start` when:
+
+- You've previously stopped the app with `kamal app stop`
+- You want to resume the existing containers without pulling new images
+- You're recovering from a maintenance window
+
+<Tip>
+  If you need to deploy a new version, use `kamal app boot` or `kamal deploy` instead. The `start` command only works with existing containers.
+</Tip>
+
+## Proxy Integration
+
+If your role is configured with a proxy (like Kamal Proxy), the start command will:
+
+1. Get the current running version
+2. Retrieve the container ID for that version
+3. Deploy the endpoint to the proxy to resume traffic routing
+
+## Related Commands
+
+- [`kamal app boot`](/commands/app/boot) - Boot or reboot the app
+- [`kamal app stop`](/commands/app/stop) - Stop running containers
+- [`kamal app details`](/commands/app/details) - View container details

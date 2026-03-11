@@ -1,0 +1,442 @@
+---
+title: kamal build remove
+description: Remove the Docker buildx builder setup
+---
+
+The `kamal build remove` command removes the Docker buildx builder created by Kamal.
+
+## Usage
+
+```bash
+kamal build remove
+```
+
+## What It Does
+
+The `build remove` command cleans up the builder infrastructure:
+
+<Steps>
+  <Step title="Builder Identification">
+    Identifies the builder name based on your configuration and builder type
+    
+    Reference: `lib/kamal/cli/build.rb:110`
+  </Step>
+  
+  <Step title="Builder Removal">
+    Removes the buildx builder instance
+    
+    Reference: `lib/kamal/cli/build.rb:111`
+  </Step>
+  
+  <Step title="Context Cleanup">
+    For remote/hybrid builders, also removes associated Docker contexts
+  </Step>
+</Steps>
+
+## When to Use
+
+Use `kamal build remove` when you need to:
+
+<Check>✓ Clean up builder configuration after project completion</Check>
+<Check>✓ Reset the builder to fix configuration issues</Check>
+<Check>✓ Switch between builder types (local → remote, etc.)</Check>
+<Check>✓ Free up resources used by the builder</Check>
+<Check>✓ Troubleshoot builder-related problems</Check>
+
+<Info>
+Removing the builder doesn't affect your built images or deployments. It only removes the build infrastructure.
+</Info>
+
+## What Gets Removed
+
+Depending on your builder type, different resources are removed:
+
+<Tabs>
+  <Tab title="Local Builder">
+    Removes the local buildx builder:
+    
+    ```bash
+    docker buildx rm kamal-myapp-local
+    ```
+    
+    **Resources removed:**
+    - Buildx builder instance
+    - Builder containers (if running)
+    - Local builder state
+    
+    **Resources preserved:**
+    - Built images in local Docker
+    - Build cache (unless using inline cache)
+    - Docker daemon
+  </Tab>
+  
+  <Tab title="Remote Builder">
+    Removes the remote builder and context:
+    
+    ```bash
+    docker buildx rm kamal-myapp-remote
+    docker context rm kamal-myapp-remote
+    ```
+    
+    **Resources removed:**
+    - Buildx builder instance
+    - Docker context pointing to remote host
+    - Builder state on remote host
+    
+    **Resources preserved:**
+    - Remote Docker daemon
+    - Built images in registry
+    - Remote host configuration
+  </Tab>
+  
+  <Tab title="Hybrid Builder">
+    Removes the hybrid builder and remote context:
+    
+    ```bash
+    docker buildx rm kamal-myapp-hybrid
+    docker context rm kamal-myapp-hybrid-remote
+    ```
+    
+    **Resources removed:**
+    - Multi-node buildx builder
+    - Remote Docker context
+    - Both local and remote builder nodes
+  </Tab>
+  
+  <Tab title="Cloud Builder">
+    Removes the local reference to the cloud builder:
+    
+    ```bash
+    docker buildx rm kamal-myapp-cloud
+    ```
+    
+    **Resources removed:**
+    - Local buildx configuration for cloud builder
+    
+    **Resources preserved:**
+    - Cloud builder in Docker Build Cloud (managed separately)
+  </Tab>
+</Tabs>
+
+## Example Output
+
+<Tabs>
+  <Tab title="Successful Removal">
+    ```bash
+    $ kamal build remove
+      INFO [d2b8c5f8] Running /usr/bin/env docker buildx rm on localhost
+      DEBUG [d2b8c5f8] Command: docker buildx rm kamal-myapp-local
+      DEBUG [d2b8c5f8]   kamal-myapp-local
+      INFO [d2b8c5f8] Finished in 0.456s
+    ```
+  </Tab>
+  
+  <Tab title="Builder Not Found">
+    ```bash
+    $ kamal build remove
+      ERROR [e5f6g7h8] Running /usr/bin/env docker buildx rm on localhost
+      ERROR [e5f6g7h8] ERROR: no builder "kamal-myapp-local" found
+    ```
+    
+    This is normal if the builder doesn't exist. You can safely ignore this error.
+  </Tab>
+  
+  <Tab title="Remote Builder Removal">
+    ```bash
+    $ kamal build remove
+      INFO [a1b2c3d4] Running /usr/bin/env docker buildx rm on localhost
+      DEBUG [a1b2c3d4]   kamal-myapp-remote
+      INFO [a1b2c3d4] Finished in 0.567s
+      INFO [i9j0k1l2] Running /usr/bin/env docker context rm on localhost
+      DEBUG [i9j0k1l2]   kamal-myapp-remote
+      INFO [i9j0k1l2] Finished in 0.123s
+    ```
+  </Tab>
+</Tabs>
+
+## Common Use Cases
+
+### 1. Reset Builder Configuration
+
+When changing builder settings:
+
+```bash
+# Remove old builder
+kamal build remove
+
+# Update configuration
+# Edit config/deploy.yml
+
+# Create new builder with updated config
+kamal build create
+```
+
+### 2. Switch Builder Types
+
+When changing from local to remote builder:
+
+```yaml
+# Old configuration
+builder:
+  driver: docker-container
+  arch: amd64
+
+# New configuration  
+builder:
+  remote: ssh://docker@builder.example.com
+  arch:
+    - amd64
+    - arm64
+```
+
+```bash
+# Remove old builder
+kamal build remove
+
+# Next build will auto-create remote builder
+kamal build push
+```
+
+### 3. Troubleshooting Build Issues
+
+When experiencing builder problems:
+
+```bash
+# Remove potentially corrupted builder
+kamal build remove
+
+# Recreate fresh builder
+kamal build create
+
+# Verify builder is working
+kamal build details
+
+# Try building again
+kamal build push
+```
+
+### 4. Cleanup After Project
+
+When finished with a project:
+
+```bash
+# Remove builder
+kamal build remove
+
+# Optional: Remove images
+docker image prune -a
+
+# Optional: Clean build cache
+docker builder prune -a
+```
+
+## Build Cache Preservation
+
+Removing the builder doesn't automatically remove build cache:
+
+<Tabs>
+  <Tab title="Registry Cache">
+    ```yaml
+    builder:
+      cache:
+        type: registry
+        image: myapp-build-cache
+    ```
+    
+    **After removal:**
+    - Builder is removed
+    - Cache images remain in registry
+    - Next build reuses existing cache
+    
+    To remove cache:
+    ```bash
+    docker rmi myregistry.com/myapp-build-cache
+    ```
+  </Tab>
+  
+  <Tab title="Local Cache">
+    ```yaml
+    builder:
+      cache:
+        type: local
+    ```
+    
+    **After removal:**
+    - Builder is removed
+    - Cache may be removed with builder
+    
+    To explicitly clean cache:
+    ```bash
+    docker builder prune
+    ```
+  </Tab>
+  
+  <Tab title="GHA Cache">
+    ```yaml
+    builder:
+      cache:
+        type: gha
+    ```
+    
+    **After removal:**
+    - Builder is removed
+    - GitHub Actions cache remains
+    - Managed by GitHub's cache policies
+  </Tab>
+</Tabs>
+
+## Automatic Recreation
+
+Kamal automatically recreates the builder when needed:
+
+```bash
+$ kamal build remove
+# Builder removed
+
+$ kamal build push
+# Builder doesn't exist
+WARN: Missing compatible builder, so creating a new one first
+# Builder automatically created
+# Build proceeds normally
+```
+
+Reference: `lib/kamal/cli/build.rb:44-56`
+
+<Info>
+You don't need to manually run `kamal build create` after removing the builder. It will be recreated automatically during the next build.
+</Info>
+
+## Related Commands
+
+- [`kamal build create`](/commands/build/create) - Create the builder setup
+- [`kamal build details`](/commands/build/details) - Show current builder information
+- [`kamal build push`](/commands/build/push) - Build and push (auto-creates builder if missing)
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Builder not found' error">
+    This is normal if the builder doesn't exist:
+    
+    ```bash
+    $ kamal build remove
+    ERROR: no builder "kamal-myapp-local" found
+    ```
+    
+    You can safely ignore this. The builder is already removed (or never existed).
+  </Accordion>
+  
+  <Accordion title="Builder removal hangs">
+    If removal is stuck, try:
+    
+    1. Stop any running builds:
+       ```bash
+       docker buildx stop kamal-myapp-local
+       ```
+    
+    2. Force remove:
+       ```bash
+       docker buildx rm -f kamal-myapp-local
+       ```
+    
+    3. Check for stuck containers:
+       ```bash
+       docker ps -a | grep buildx
+       docker rm -f <container-id>
+       ```
+  </Accordion>
+  
+  <Accordion title="Context removal fails">
+    For remote builders, if context removal fails:
+    
+    ```bash
+    # List contexts
+    docker context ls
+    
+    # Force remove context
+    docker context rm -f kamal-myapp-remote
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission denied">
+    If you get permission errors:
+    
+    ```bash
+    sudo docker buildx rm kamal-myapp-local
+    ```
+    
+    Or add your user to the `docker` group:
+    ```bash
+    sudo usermod -aG docker $USER
+    newgrp docker
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Manual Cleanup
+
+For more thorough cleanup, use Docker commands directly:
+
+<CodeGroup>
+```bash Remove All Builders
+# List all builders
+docker buildx ls
+
+# Remove specific builder
+docker buildx rm kamal-myapp-local
+
+# Remove all inactive builders
+docker buildx prune
+```
+
+```bash Remove Contexts
+# List contexts
+docker context ls
+
+# Remove specific context
+docker context rm kamal-myapp-remote
+```
+
+```bash Clean Build Cache
+# Remove all build cache
+docker builder prune -a
+
+# Remove cache for specific builder
+docker buildx prune --builder kamal-myapp-local
+```
+
+```bash Complete Cleanup
+# Remove builder
+kamal build remove
+
+# Remove build cache
+docker builder prune -a
+
+# Remove unused images
+docker image prune -a
+
+# Remove unused containers
+docker container prune
+```
+</CodeGroup>
+
+<Warning>
+`docker builder prune -a` removes all build cache, not just for your application. This affects all Docker builds on the machine.
+</Warning>
+
+## Builder State Preservation
+
+Some state persists after removal:
+
+| Resource | Preserved | Location |
+|----------|-----------|----------|
+| Built images | ✓ | Local Docker & Registry |
+| Registry cache | ✓ | Container Registry |
+| GHA cache | ✓ | GitHub Actions |
+| Builder config | ✗ | Removed |
+| Docker context | ✗ | Removed |
+| Local build cache | Maybe | Depends on driver |
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:107-113`

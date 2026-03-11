@@ -1,0 +1,439 @@
+---
+title: kamal build create
+description: Create the Docker buildx builder setup
+---
+
+The `kamal build create` command creates and configures the Docker buildx builder required for building your application images.
+
+## Usage
+
+```bash
+kamal build create
+```
+
+## What It Does
+
+The `build create` command sets up the Docker buildx builder:
+
+<Steps>
+  <Step title="Remote Host Connection">
+    If using a remote builder, establishes SSH connection to the remote host
+    
+    Reference: `lib/kamal/cli/build.rb:88-90`
+  </Step>
+  
+  <Step title="Builder Creation">
+    Creates the buildx builder with the configured driver and options
+    
+    Reference: `lib/kamal/cli/build.rb:92-105`
+  </Step>
+  
+  <Step title="Verification">
+    Verifies the builder was created successfully
+  </Step>
+</Steps>
+
+## When to Use
+
+You typically don't need to run this command manually because:
+
+<Info>
+Kamal automatically creates the builder when running `kamal build push` if it doesn't exist.
+
+Reference: `lib/kamal/cli/build.rb:44-56`
+</Info>
+
+Run `build create` manually when:
+
+<Check>✓ You want to set up the builder before building</Check>
+<Check>✓ Troubleshooting builder issues</Check>
+<Check>✓ Testing builder configuration</Check>
+<Check>✓ Pre-provisioning CI/CD environments</Check>
+
+## Builder Types
+
+The type of builder created depends on your configuration:
+
+<Tabs>
+  <Tab title="Local Builder">
+    Creates a local Docker buildx builder:
+    
+    ```yaml
+    builder:
+      driver: docker-container
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    **Created builder:**
+    ```bash
+    docker buildx create \
+      --name kamal-myapp-local \
+      --driver docker-container \
+      --platform linux/amd64,linux/arm64 \
+      --use
+    ```
+    
+    Reference: `lib/kamal/commands/builder/local.rb`
+  </Tab>
+  
+  <Tab title="Remote Builder">
+    Creates a builder pointing to a remote Docker host:
+    
+    ```yaml
+    builder:
+      remote: ssh://docker@builder.example.com
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    **Created components:**
+    1. Docker context for the remote host
+    2. Buildx builder using that context
+    
+    ```bash
+    docker context create kamal-myapp-remote \
+      --docker "host=ssh://docker@builder.example.com"
+    
+    docker buildx create \
+      --name kamal-myapp-remote \
+      --driver docker-container \
+      --platform linux/amd64,linux/arm64 \
+      kamal-myapp-remote
+    ```
+    
+    Reference: `lib/kamal/commands/builder/remote.rb`
+  </Tab>
+  
+  <Tab title="Hybrid Builder">
+    Creates a builder with both local and remote nodes:
+    
+    ```yaml
+    builder:
+      remote: ssh://docker@builder.example.com
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    **Created components:**
+    1. Local buildx builder
+    2. Remote Docker context
+    3. Remote node appended to local builder
+    
+    ```bash
+    # Create base local builder
+    docker buildx create \
+      --name kamal-myapp-hybrid \
+      --driver docker-container \
+      --platform linux/amd64 \
+      --use
+    
+    # Add remote node
+    docker context create kamal-myapp-hybrid-remote ...
+    docker buildx create \
+      --name kamal-myapp-hybrid \
+      --append \
+      --platform linux/arm64 \
+      kamal-myapp-hybrid-remote
+    ```
+    
+    Reference: `lib/kamal/commands/builder/hybrid.rb`
+  </Tab>
+  
+  <Tab title="Cloud Builder">
+    Configures Docker Build Cloud builder:
+    
+    ```yaml
+    builder:
+      driver: cloud myorg/mybuilder
+    ```
+    
+    **Uses existing cloud builder:**
+    ```bash
+    docker buildx create \
+      --name kamal-myapp-cloud \
+      --driver cloud \
+      myorg/mybuilder
+    ```
+    
+    Reference: `lib/kamal/commands/builder/cloud.rb`
+  </Tab>
+  
+  <Tab title="Pack Builder">
+    No buildx builder created; uses Cloud Native Buildpacks directly:
+    
+    ```yaml
+    builder:
+      pack:
+        builder: heroku/builder:24
+    ```
+    
+    **Uses pack CLI:**
+    ```bash
+    pack build myapp --builder heroku/builder:24
+    ```
+    
+    Reference: `lib/kamal/commands/builder/pack.rb`
+  </Tab>
+</Tabs>
+
+## Builder Naming
+
+Kamal uses a consistent naming convention:
+
+```
+kamal-<service>-<type>
+```
+
+Examples:
+- `kamal-myapp-local`
+- `kamal-myapp-remote`
+- `kamal-myapp-hybrid`
+- `kamal-myapp-cloud`
+
+## Remote Builder Setup
+
+For remote builders, additional SSH connection is established:
+
+<Steps>
+  <Step title="Parse Remote URI">
+    Extracts host, user, and port from the remote URL:
+    
+    ```yaml
+    builder:
+      remote: ssh://docker@builder.example.com:2222
+    ```
+    
+    Reference: `lib/kamal/cli/build.rb:161-163`
+  </Step>
+  
+  <Step title="Test Connection">
+    Verifies SSH connectivity by running `true` on the remote host:
+    
+    ```bash
+    ssh docker@builder.example.com -p 2222 "true"
+    ```
+    
+    Reference: `lib/kamal/cli/build.rb:167-169`
+  </Step>
+  
+  <Step title="Create Context">
+    Creates a Docker context for the remote host
+    
+    Reference: `lib/kamal/commands/builder/remote.rb:60-74`
+  </Step>
+  
+  <Step title="Create Builder">
+    Creates the buildx builder using the remote context
+  </Step>
+</Steps>
+
+## Example Output
+
+<Tabs>
+  <Tab title="Local Builder">
+    ```bash
+    $ kamal build create
+      INFO [d2b8c5f8] Running /usr/bin/env docker buildx create on localhost
+      DEBUG [d2b8c5f8] Command: docker buildx create --name kamal-myapp-local --driver docker-container --platform linux/amd64,linux/arm64 --use
+      DEBUG [d2b8c5f8]   kamal-myapp-local
+      INFO [d2b8c5f8] Finished in 1.234s
+    ```
+  </Tab>
+  
+  <Tab title="Remote Builder">
+    ```bash
+    $ kamal build create
+      INFO [a1b2c3d4] Running /usr/bin/env ssh docker@builder.example.com "true" on localhost
+      INFO [a1b2c3d4] Finished in 0.567s
+      INFO [e5f6g7h8] Running /usr/bin/env docker context create on localhost
+      DEBUG [e5f6g7h8]   kamal-myapp-remote
+      INFO [e5f6g7h8] Finished in 0.234s
+      INFO [i9j0k1l2] Running /usr/bin/env docker buildx create on localhost
+      DEBUG [i9j0k1l2]   kamal-myapp-remote
+      INFO [i9j0k1l2] Finished in 1.456s
+    ```
+  </Tab>
+  
+  <Tab title="Builder Already Exists">
+    ```bash
+    $ kamal build create
+      ERROR [m3n4o5p6] Running /usr/bin/env docker buildx create on localhost
+      ERROR [m3n4o5p6] Command: docker buildx create --name kamal-myapp-local ...
+      ERROR [m3n4o5p6] ERROR: instance "kamal-myapp-local" already exists
+    ```
+    
+    Remove the existing builder first:
+    ```bash
+    kamal build remove
+    kamal build create
+    ```
+  </Tab>
+</Tabs>
+
+## Builder Configuration Options
+
+The builder respects these configuration options:
+
+```yaml
+builder:
+  # Architecture support
+  arch:
+    - amd64
+    - arm64
+  
+  # Builder driver
+  driver: docker-container  # or 'docker', 'cloud org/builder'
+  
+  # Remote builder (creates remote or hybrid builder)
+  remote: ssh://docker@builder.example.com
+  
+  # Cache configuration (affects builder creation)
+  cache:
+    type: registry
+    image: myapp-build-cache
+  
+  # Disable local building (for remote-only)
+  local: false
+```
+
+See the [Builder Configuration](/configuration/builder) documentation for all options.
+
+## Verifying the Builder
+
+After creation, verify the builder:
+
+```bash
+kamal build details
+```
+
+Or use Docker directly:
+
+```bash
+docker buildx ls
+```
+
+Expected output:
+
+```
+NAME/NODE              DRIVER/ENDPOINT             STATUS  BUILDKIT PLATFORMS
+kamal-myapp-local *    docker-container                             
+  kamal-myapp-local0   unix:///var/run/docker.sock running v0.12.5  linux/amd64, linux/arm64
+```
+
+## Related Commands
+
+- [`kamal build remove`](/commands/build/remove) - Remove the builder setup
+- [`kamal build details`](/commands/build/details) - Show builder information
+- [`kamal build push`](/commands/build/push) - Build and push (auto-creates builder if needed)
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Builder already exists">
+    If the builder already exists:
+    
+    ```bash
+    kamal build remove
+    kamal build create
+    ```
+    
+    Or inspect the existing builder:
+    ```bash
+    kamal build details
+    ```
+  </Accordion>
+  
+  <Accordion title="Remote host connection fails">
+    Test SSH access manually:
+    
+    ```bash
+    ssh docker@builder.example.com
+    ```
+    
+    Check that:
+    - SSH key is authorized on the remote host
+    - Docker is installed on the remote host
+    - User has permission to access Docker
+    
+    ```bash
+    ssh docker@builder.example.com "docker version"
+    ```
+  </Accordion>
+  
+  <Accordion title="Buildx not available">
+    Ensure Docker with buildx is installed:
+    
+    ```bash
+    docker buildx version
+    ```
+    
+    If missing, update Docker to version 19.03 or later.
+  </Accordion>
+  
+  <Accordion title="Platform not supported">
+    If you see platform errors, check available architectures:
+    
+    ```bash
+    docker buildx ls
+    ```
+    
+    You may need to install QEMU for emulation:
+    
+    ```bash
+    docker run --privileged --rm tonistiigi/binfmt --install all
+    ```
+  </Accordion>
+  
+  <Accordion title="Cloud builder not found">
+    For Docker Build Cloud:
+    
+    1. Verify you're logged into Docker:
+       ```bash
+       docker login
+       ```
+    
+    2. Verify the builder exists:
+       ```bash
+       docker buildx ls
+       ```
+    
+    3. Check the builder name matches your configuration
+  </Accordion>
+</AccordionGroup>
+
+## Advanced: Manual Builder Management
+
+You can also manage builders directly with Docker:
+
+<CodeGroup>
+```bash List Builders
+docker buildx ls
+```
+
+```bash Inspect Builder
+docker buildx inspect kamal-myapp-local
+```
+
+```bash Remove Builder
+docker buildx rm kamal-myapp-local
+```
+
+```bash Create Custom Builder
+docker buildx create \
+  --name custom-builder \
+  --driver docker-container \
+  --use
+```
+</CodeGroup>
+
+<Warning>
+Manually-created builders may not be compatible with Kamal's naming conventions. Use `kamal build create` for best compatibility.
+</Warning>
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:86-105`

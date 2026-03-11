@@ -1,0 +1,230 @@
+---
+title: kamal build deliver
+description: Build app image and push to registry, then pull to servers
+---
+
+The `kamal build deliver` command is a convenience command that combines building and distributing your application image in one step.
+
+## Usage
+
+```bash
+kamal build deliver
+```
+
+This command performs two operations sequentially:
+
+<Steps>
+  <Step title="Build and Push">
+    Builds your Docker image and pushes it to the configured registry.
+    
+    Equivalent to running `kamal build push`
+  </Step>
+  
+  <Step title="Pull to Servers">
+    Pulls the built image to all configured application servers.
+    
+    Equivalent to running `kamal build pull`
+  </Step>
+</Steps>
+
+## What It Does
+
+<CardGroup cols={2}>
+  <Card title="Builds Image" icon="hammer">
+    Compiles your application into a Docker image using your configured builder
+  </Card>
+  <Card title="Pushes to Registry" icon="cloud-arrow-up">
+    Uploads the image to your container registry (Docker Hub, ECR, GCR, etc.)
+  </Card>
+  <Card title="Seeds Mirrors" icon="copy">
+    If using registry mirrors, pulls to one host per mirror first to seed the cache
+  </Card>
+  <Card title="Distributes Image" icon="server">
+    Pulls the image to all remaining application servers in parallel
+  </Card>
+</CardGroup>
+
+## When to Use
+
+Use `kamal build deliver` when you want to:
+
+<Check>✓ Build and distribute a new image without deploying it</Check>
+<Check>✓ Pre-warm servers with a new image before deployment</Check>
+<Check>✓ Test the build and distribution process</Check>
+<Check>✓ Update the image on servers for manual testing</Check>
+
+<Info>
+This command does **not** deploy the application. Use `kamal deploy` for a complete deployment.
+</Info>
+
+## Build Process
+
+The build phase follows this workflow:
+
+<Steps>
+  <Step title="Pre-Connect Hooks">
+    Runs pre-connect hooks if configured (required for remote builders)
+  </Step>
+  
+  <Step title="Docker Validation">
+    Ensures Docker is installed and accessible locally
+  </Step>
+  
+  <Step title="Registry Login">
+    Logs into the container registry if building locally
+  </Step>
+  
+  <Step title="Pre-Build Hook">
+    Executes the `pre-build` hook if defined in your configuration
+  </Step>
+  
+  <Step title="Git Clone (Optional)">
+    If `builder.context` is not set, creates a clean Git clone for building
+  </Step>
+  
+  <Step title="Builder Inspection">
+    Checks if the builder exists; creates it if missing
+  </Step>
+  
+  <Step title="Image Build">
+    Builds the Docker image for configured architectures
+  </Step>
+  
+  <Step title="Registry Push">
+    Pushes the built image to the registry
+  </Step>
+</Steps>
+
+## Distribution Process
+
+The pull phase follows this workflow:
+
+<Steps>
+  <Step title="Registry Login">
+    Logs into the registry on all application servers (unless using a local registry)
+  </Step>
+  
+  <Step title="Mirror Seeding">
+    If using registry mirrors, pulls to one host per mirror first to populate the cache
+  </Step>
+  
+  <Step title="Parallel Pull">
+    Pulls the image to all remaining servers in parallel
+  </Step>
+  
+  <Step title="Image Validation">
+    Validates that the pulled image has the correct service label
+  </Step>
+</Steps>
+
+## Example Output
+
+```bash
+$ kamal build deliver
+  INFO [d2b8c5f8] Running /usr/bin/env docker inspect myapp-builder on localhost
+  INFO [d2b8c5f8] Finished in 0.234s
+  INFO [e3c9d6g9] Running docker buildx build on localhost
+  => Building image...
+  => Pushing to registry...
+  INFO [f4d0e7h0] Finished in 45.678s
+  INFO Pulling image on web-1, web-2 to seed the mirrors...
+  INFO [a1b2c3d4] Running docker pull on web-1
+  INFO [e5f6g7h8] Running docker pull on web-2
+  INFO Pulling image on remaining hosts...
+  INFO [i9j0k1l2] Running docker pull on web-3
+  INFO [m3n4o5p6] Running docker pull on web-4
+```
+
+## Configuration
+
+The build behavior is controlled by your `builder` configuration:
+
+```yaml
+builder:
+  arch:
+    - amd64
+    - arm64
+  cache:
+    type: registry
+    options: mode=max
+  remote: ssh://docker@builder.example.com  # Optional
+```
+
+See the [Builder Configuration](/configuration/builder) documentation for all available options.
+
+## Uncommitted Changes Warning
+
+If you have uncommitted changes in your repository:
+
+<Warning>
+**With git clone (default):** Uncommitted changes are ignored and a warning is shown.
+
+**With `context: .`:** Uncommitted changes are included in the build with a warning.
+</Warning>
+
+```bash
+Building with uncommitted changes:
+ M app/controllers/posts_controller.rb
+ ?? app/views/posts/new.html.erb
+```
+
+## Registry Mirrors
+
+Kamal optimizes image distribution when using registry mirrors:
+
+1. **Identifies mirror groups** by running `docker system info` on each host
+2. **Seeds one host per mirror** by pulling the image first
+3. **Pulls to remaining hosts** in parallel, which fetch from the seeded mirrors
+
+This significantly reduces bandwidth usage and speeds up distribution for large deployments.
+
+<Info>
+Registry mirrors are configured at the Docker daemon level, not in Kamal.
+</Info>
+
+## Related Commands
+
+- [`kamal build push`](/commands/build/push) - Build and push without pulling to servers
+- [`kamal build pull`](/commands/build/pull) - Pull image to servers without building
+- [`kamal deploy`](/commands/deploy) - Complete deployment including build, push, pull, and start
+- [`kamal build create`](/commands/build/create) - Create the builder setup
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Builder not found">
+    If you see "context not found" or "no builder" errors:
+    
+    ```bash
+    kamal build create
+    ```
+    
+    Kamal automatically creates the builder when running `build deliver`, but you can create it manually first.
+  </Accordion>
+  
+  <Accordion title="Failed to push to registry">
+    Ensure your registry credentials are configured correctly:
+    
+    ```yaml
+    registry:
+      server: registry.example.com
+      username: myuser
+      password:
+        - KAMAL_REGISTRY_PASSWORD
+    ```
+    
+    And that `KAMAL_REGISTRY_PASSWORD` is set in `.kamal/secrets`.
+  </Accordion>
+  
+  <Accordion title="Image pull fails on servers">
+    Check that servers can reach your registry and have valid credentials:
+    
+    ```bash
+    kamal app exec 'docker pull myregistry.com/myapp:latest'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:4-8`

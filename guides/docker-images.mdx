@@ -1,0 +1,388 @@
+---
+title: Working with Docker Images
+description: Build, push, and manage Docker images for your Kamal deployments
+---
+
+Kamal provides powerful commands to build, tag, and manage Docker images for your application deployments.
+
+## Building Images
+
+### Standard Build and Push
+
+The most common workflow is to build your application image and push it to a registry:
+
+```bash
+kamal build push
+```
+
+This command:
+- Checks for uncommitted changes and warns you
+- Logs into your registry
+- Runs pre-build hooks
+- Builds the Docker image using buildx
+- Pushes the image to your configured registry
+
+<Tip>
+Kamal will automatically create a builder if one doesn't exist. You'll see a warning: "Missing compatible builder, so creating a new one first"
+</Tip>
+
+### Build Options
+
+<CodeGroup>
+
+```bash No Cache
+# Build without using Docker's cache
+kamal build push --no-cache
+```
+
+```bash Custom Output
+# Change the build output type
+kamal build push --output=docker
+```
+
+</CodeGroup>
+
+### Development Builds
+
+For local development, use the `dev` command to build with uncommitted changes:
+
+```bash
+kamal build dev
+```
+
+This:
+- Tags the image as "dirty"
+- Includes uncommitted and untracked files
+- Pushes to your local Docker image store (not registry)
+- Warns you about uncommitted files
+
+<Warning>
+Development builds include all uncommitted changes. Kamal will show you which files are affected before building.
+</Warning>
+
+## Image Configuration
+
+### Basic Image Setup
+
+In your `config/deploy.yml`:
+
+```yaml
+# Name of the container image
+image: my-user/my-app
+
+# Service name (used for tagging)
+service: my-app
+```
+
+### Registry Configuration
+
+Configure your Docker registry for image storage:
+
+<CodeGroup>
+
+```yaml Docker Hub
+registry:
+  # Docker Hub (default)
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml GitHub Container Registry
+registry:
+  server: ghcr.io
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml DigitalOcean
+registry:
+  server: registry.digitalocean.com
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml AWS ECR
+registry:
+  server: 123456789.dkr.ecr.us-east-1.amazonaws.com
+  username: AWS
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+</CodeGroup>
+
+<Warning>
+Always use an access token or app password rather than your actual password. Store these in `.kamal/secrets`.
+</Warning>
+
+### Local Registry
+
+For testing or local deployments, you can use a local registry:
+
+```yaml
+registry:
+  server: localhost:5555
+```
+
+Set up the local registry:
+
+```bash
+kamal registry setup
+```
+
+## Builder Configuration
+
+### Architecture Settings
+
+Specify target architectures for multi-platform builds:
+
+```yaml
+builder:
+  arch: amd64
+  # Or build for multiple architectures
+  # arch:
+  #   - amd64
+  #   - arm64
+```
+
+### Custom Dockerfile
+
+```yaml
+builder:
+  dockerfile: Dockerfile.production
+  target: production
+  context: "."
+```
+
+### Build Arguments
+
+Pass build-time variables to your Dockerfile:
+
+```yaml
+builder:
+  args:
+    RUBY_VERSION: <%= ENV["RBENV_VERSION"] || "3.2.0" %>
+    NODE_VERSION: "18"
+    RAILS_ENV: production
+```
+
+In your Dockerfile:
+
+```dockerfile
+ARG RUBY_VERSION
+FROM ruby:${RUBY_VERSION}
+
+ARG NODE_VERSION
+ARG RAILS_ENV
+```
+
+### Build Secrets
+
+Pass sensitive values during build without including them in the image:
+
+```yaml
+builder:
+  secrets:
+    - GITHUB_TOKEN
+    - NPM_TOKEN
+```
+
+In your Dockerfile:
+
+```dockerfile
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    GITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN) \
+    bundle install
+```
+
+### Remote Builder
+
+Build on a remote machine for better performance:
+
+```yaml
+builder:
+  remote: ssh://user@builder-host
+  arch: amd64
+```
+
+## Pulling Images
+
+### Pull to Servers
+
+After pushing, pull the image to your deployment servers:
+
+```bash
+kamal build pull
+```
+
+This:
+- Logs into the registry on all servers
+- Pulls on one host per mirror first (to seed mirrors)
+- Then pulls on remaining hosts in parallel
+- Validates the pulled image
+
+### Combined Workflow
+
+Build, push, and pull in one command:
+
+```bash
+kamal build deliver
+```
+
+## Builder Management
+
+### Create Builder
+
+```bash
+kamal build create
+```
+
+Creates a new Docker buildx builder with your configuration.
+
+### View Builder Details
+
+```bash
+kamal build details
+```
+
+Shows current builder name and configuration.
+
+### Remove Builder
+
+```bash
+kamal build remove
+```
+
+## Image Tagging Strategy
+
+Kamal automatically tags images using:
+
+<Steps>
+
+<Step title="Git Version">
+By default, uses your Git commit SHA as the tag:
+```
+my-user/my-app:abc123def456
+```
+</Step>
+
+<Step title="Environment Variable">
+Override with the VERSION environment variable:
+```bash
+VERSION=v2.1.0 kamal deploy
+```
+</Step>
+
+<Step title="Development Tag">
+Dev builds get tagged with "-dirty":
+```
+my-user/my-app:abc123def456-dirty
+```
+</Step>
+
+</Steps>
+
+## Advanced Build Configuration
+
+### Build Cache
+
+Enable build caching for faster builds:
+
+```yaml
+builder:
+  cache:
+    type: gha
+    # Or use registry cache
+    # type: registry
+    # options: mode=max
+```
+
+### Docker Buildpack
+
+Use Cloud Native Buildpacks instead of a Dockerfile:
+
+```yaml
+builder:
+  pack: true
+  # Optional: specify builder
+  # builder: heroku/buildpacks:20
+```
+
+### Build from Git Clone
+
+Build from a clean git checkout instead of working directory:
+
+```yaml
+builder:
+  context: git
+```
+
+This ensures no uncommitted files are included in the build.
+
+## Registry Commands
+
+### Setup Registry Access
+
+```bash
+# Setup both locally and on servers
+kamal registry setup
+
+# Skip local setup
+kamal registry setup --skip-local
+
+# Skip remote setup
+kamal registry setup --skip-remote
+```
+
+### Login to Registry
+
+```bash
+kamal registry login
+```
+
+### Logout from Registry
+
+```bash
+kamal registry logout
+```
+
+## Troubleshooting
+
+<Accordion title="Build fails with 'context not found'">
+The builder doesn't exist. Run `kamal build create` to create it, or let Kamal auto-create it during the next push.
+</Accordion>
+
+<Accordion title="Image push is very slow">
+Consider using a remote builder closer to your registry, or enable build cache to avoid rebuilding unchanged layers.
+</Accordion>
+
+<Accordion title="Authentication errors">
+Ensure your registry password is correctly set in `.kamal/secrets` and that you're using an access token, not your account password.
+</Accordion>
+
+<Accordion title="Multi-arch builds fail">
+Make sure QEMU is installed on your build machine: `docker run --privileged --rm tonistiigi/binfmt --install all`
+</Accordion>
+
+## Best Practices
+
+1. **Use access tokens** - Never use your actual password for registry authentication
+2. **Tag releases** - Use semantic versioning for production deployments: `VERSION=v1.2.3 kamal deploy`
+3. **Enable caching** - Build caching can significantly speed up builds
+4. **Multi-stage builds** - Use multi-stage Dockerfiles to minimize image size
+5. **Pin base images** - Use specific versions for base images to ensure reproducible builds
+6. **Test locally** - Use `kamal build dev` to test builds with local changes before committing
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SSL Certificates" icon="lock" href="/guides/ssl-certificates">
+    Configure SSL with Let's Encrypt
+  </Card>
+  <Card title="Multiple Servers" icon="server" href="/guides/multiple-servers">
+    Deploy across multiple servers
+  </Card>
+</CardGroup>

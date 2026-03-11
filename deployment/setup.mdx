@@ -1,0 +1,268 @@
+---
+title: Setup
+description: Initial setup process and server bootstrapping for Kamal deployments
+---
+
+The setup command prepares your servers for deploying applications with Kamal. It installs Docker, configures accessories, and performs an initial deployment.
+
+## Overview
+
+The `kamal setup` command is a comprehensive initialization that combines server bootstrapping, environment configuration, and first deployment into a single operation.
+
+<Info>
+  Setup is typically run once when first deploying your application. For subsequent deployments, use `kamal deploy` instead.
+</Info>
+
+## What Setup Does
+
+<Steps>
+  <Step title="Install Docker">
+    Ensures Docker is installed on all servers. If Docker is missing and the user has root access, Kamal will automatically install it.
+    
+    ```ruby
+    # From main.rb:10-11
+    say "Ensure Docker is installed...", :magenta
+    invoke "kamal:cli:server:bootstrap", [], invoke_options
+    ```
+  </Step>
+  
+  <Step title="Boot Accessories">
+    Starts any configured accessories like databases or Redis servers before deploying your application.
+    
+    <Note>
+      Accessories are only booted during setup, not regular deployments. Configure them in `config/deploy.yml` under the `accessories` key.
+    </Note>
+  </Step>
+  
+  <Step title="Deploy Application">
+    Runs a complete deployment including building the image, pushing to registry, and starting containers.
+  </Step>
+</Steps>
+
+## Running Setup
+
+### Basic Setup
+
+```bash
+kamal setup
+```
+
+This command will:
+- Check for Docker installation on all servers
+- Install Docker if missing (requires root access)
+- Add the deployment user to the docker group
+- Start all configured accessories
+- Build and push your application image
+- Deploy the application to all servers
+
+### Setup Options
+
+<CodeGroup>
+```bash Skip Image Build
+kamal setup --skip-push
+```
+
+```bash Build Without Cache
+kamal setup --no-cache
+```
+</CodeGroup>
+
+## Server Bootstrapping
+
+The bootstrap process (invoked by setup) handles Docker installation:
+
+```ruby
+# From server.rb:28-60
+def bootstrap
+  with_lock do
+    missing = []
+    
+    on(KAMAL.hosts) do |host|
+      unless execute(*KAMAL.docker.installed?, raise_on_non_zero_exit: false)
+        if execute(*KAMAL.docker.superuser?, raise_on_non_zero_exit: false)
+          info "Missing Docker on #{host}. Installing…"
+          execute *KAMAL.docker.install
+          
+          unless execute(*KAMAL.docker.root?, raise_on_non_zero_exit: false) ||
+                 execute(*KAMAL.docker.in_docker_group?, raise_on_non_zero_exit: false)
+            execute *KAMAL.docker.add_to_docker_group
+            execute *KAMAL.docker.refresh_session
+          end
+        else
+          missing << host
+        end
+      end
+    end
+  end
+end
+```
+
+<Warning>
+  If Docker cannot be automatically installed (due to missing root access or required utilities), you'll need to manually install Docker on those servers before running setup.
+</Warning>
+
+## Prerequisites
+
+### Required Files
+
+Before running setup, ensure you have:
+
+1. **Configuration file** - `config/deploy.yml`
+2. **Secrets file** - `.kamal/secrets` (for registry credentials, etc.)
+3. **Dockerfile** - In your project root
+
+### Configuration Example
+
+```yaml config/deploy.yml
+service: my-app
+image: my-user/my-app
+
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+
+registry:
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+proxy:
+  ssl: true
+  host: app.example.com
+
+accessories:
+  redis:
+    image: valkey/valkey:8
+    host: 192.168.0.3
+    port: 6379
+    directories:
+      - data:/data
+```
+
+## Server Requirements
+
+Your servers need:
+
+- **Operating System**: Linux distribution supported by Docker
+- **SSH Access**: Key-based authentication configured
+- **User Permissions**: Root access or membership in docker group
+- **Network**: Outbound internet access for pulling images
+- **Utilities**: Either `wget` or `curl` for Docker installation
+
+## SSH Configuration
+
+By default, Kamal uses the root user. To use a different user:
+
+```yaml config/deploy.yml
+ssh:
+  user: app
+```
+
+<Info>
+  The SSH user must have sudo privileges or already be in the docker group to manage containers.
+</Info>
+
+## First-Time Setup Checklist
+
+<Steps>
+  <Step title="Initialize Kamal">
+    Run `kamal init` to create configuration templates:
+    
+    ```bash
+    kamal init
+    ```
+    
+    This creates:
+    - `config/deploy.yml`
+    - `.kamal/secrets`
+    - `.kamal/hooks/` (sample hooks)
+  </Step>
+  
+  <Step title="Configure Deployment">
+    Edit `config/deploy.yml` with your servers, registry, and application settings.
+  </Step>
+  
+  <Step title="Add Secrets">
+    Edit `.kamal/secrets` to provide registry passwords and other sensitive values:
+    
+    ```bash .kamal/secrets
+    export KAMAL_REGISTRY_PASSWORD="your-registry-token"
+    export RAILS_MASTER_KEY="your-rails-master-key"
+    ```
+  </Step>
+  
+  <Step title="Test Configuration">
+    Verify your configuration:
+    
+    ```bash
+    kamal config
+    ```
+  </Step>
+  
+  <Step title="Run Setup">
+    Execute the setup command:
+    
+    ```bash
+    kamal setup
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Docker Installation Fails
+
+If automatic Docker installation fails:
+
+```
+Docker is not installed on 192.168.0.1 and can't be automatically 
+installed without having root access and either `wget` or `curl`.
+```
+
+**Solution**: Manually install Docker on the affected servers:
+
+```bash
+# On the server
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
+```
+
+### Permission Denied
+
+If you encounter permission errors:
+
+```bash
+# Add your deploy user to the docker group
+sudo usermod -aG docker deployuser
+
+# Log out and back in for group changes to take effect
+```
+
+### Accessories Fail to Start
+
+Check accessibility logs and ensure:
+- The host machine is accessible
+- Required ports are not already in use
+- Volume directories have correct permissions
+
+```bash
+kamal accessory details all
+kamal accessory logs redis
+```
+
+## Next Steps
+
+After successful setup:
+
+- Make code changes and deploy with `kamal deploy`
+- Monitor your application with `kamal app logs`
+- Check deployment status with `kamal details`
+
+## Related Commands
+
+- `kamal init` - Create configuration files
+- `kamal deploy` - Deploy application updates
+- `kamal server bootstrap` - Bootstrap servers without deploying
+- `kamal accessory boot` - Start accessories separately

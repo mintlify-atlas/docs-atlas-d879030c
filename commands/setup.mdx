@@ -1,0 +1,182 @@
+---
+title: kamal setup
+description: Bootstrap servers and deploy your application for the first time
+---
+
+The `kamal setup` command performs a complete first-time deployment by bootstrapping servers with Docker, setting up accessories, and deploying your application.
+
+## Usage
+
+```bash
+kamal setup [OPTIONS]
+```
+
+## Description
+
+The setup command is designed for initial deployments and performs the following operations:
+
+1. **Bootstrap servers** - Installs Docker and required dependencies
+2. **Setup accessories** - Boots databases, Redis, and other services
+3. **Push environment** - Uploads environment variables and secrets
+4. **Deploy application** - Builds, pushes, and starts your app containers
+
+This command is typically run once when you first deploy to new servers. For subsequent deployments, use [`kamal deploy`](/commands/deploy).
+
+<Warning>
+The setup command will acquire a deploy lock to prevent concurrent deployments.
+</Warning>
+
+## Options
+
+<ParamField path="--skip-push" type="boolean" default={false}>
+  Skip building and pushing the Docker image. Use this when the image already exists in your registry.
+  
+  **Alias:** `-P`
+</ParamField>
+
+<ParamField path="--no-cache" type="boolean" default={false}>
+  Build the Docker image without using Docker's build cache. Useful for forcing a clean build.
+</ParamField>
+
+## Examples
+
+### Basic Setup
+
+Perform a complete first-time deployment:
+
+```bash
+kamal setup
+```
+
+### Setup with Existing Image
+
+Skip the build and push steps if your image is already in the registry:
+
+```bash
+kamal setup --skip-push
+```
+
+```bash
+kamal setup -P
+```
+
+### Setup with Clean Build
+
+Force a clean build without using cached layers:
+
+```bash
+kamal setup --no-cache
+```
+
+### Combined Options
+
+```bash
+kamal setup --skip-push --no-cache
+```
+
+## Expected Output
+
+<CodeGroup>
+```bash Successful Setup
+Ensure Docker is installed...
+  INFO [abc123] Running /usr/bin/env docker version on 192.168.1.10
+  INFO [abc123] Finished in 0.5s
+
+Build and push app image...
+  INFO Building image with version 2024-03-11-abc123
+  INFO [local] docker build --platform linux/amd64 -t myapp:latest .
+  
+Ensure kamal-proxy is running...
+  INFO [abc123] Running docker ps --filter name=kamal-proxy
+  
+Detect stale containers...
+  INFO Checking for stale containers
+  
+Booting app on servers...
+  INFO [abc123] Running docker run -d --name myapp-web-latest myapp:latest
+  
+Prune old containers and images...
+  INFO Removing unused containers and images
+  
+Finished in 45.2 seconds
+```
+
+```bash With Skip Push
+Ensure Docker is installed...
+  INFO [abc123] Running /usr/bin/env docker version on 192.168.1.10
+  
+Pull app image...
+  INFO [abc123] docker pull myapp:latest
+  
+Ensure kamal-proxy is running...
+  INFO kamal-proxy is running
+  
+Booting app on servers...
+  INFO Application booted successfully
+  
+Finished in 12.3 seconds
+```
+</CodeGroup>
+
+## Hooks
+
+The setup command triggers deployment hooks:
+
+- **pre-deploy** - Runs before deploying (with secrets available)
+- **post-deploy** - Runs after successful deployment (with runtime duration)
+
+<Note>
+Learn more about hooks in the [Hooks documentation](/configuration/hooks).
+</Note>
+
+## What Gets Installed
+
+During server bootstrapping, Kamal installs:
+
+- **Docker Engine** - Latest stable version
+- **curl** - For downloading Docker installation script
+- **Required dependencies** - System packages needed by Docker
+
+## Related Commands
+
+- [`kamal deploy`](/commands/deploy) - Deploy without bootstrapping
+- [`kamal redeploy`](/commands/redeploy) - Quick redeploy without pruning
+- [`kamal server bootstrap`](/commands/server) - Bootstrap servers only
+
+## Troubleshooting
+
+### Docker Installation Fails
+
+If Docker installation fails during setup:
+
+```bash
+# Check server access
+kamal server bootstrap
+
+# Verify SSH connection
+ssh user@your-server
+```
+
+### Image Build Fails
+
+If the image build fails:
+
+```bash
+# Check your Dockerfile syntax
+docker build .
+
+# Try with no cache
+kamal setup --no-cache
+```
+
+### Lock Timeout
+
+If another deployment is in progress:
+
+```bash
+# Check lock status
+kamal lock status
+
+# Release stuck lock if needed
+kamal lock release
+```

@@ -1,0 +1,285 @@
+---
+title: Configuration Overview
+description: Learn how to configure Kamal for deploying your application
+---
+
+Kamal uses a YAML configuration file to define your deployment setup. The main configuration file is located at `config/deploy.yml` in your project.
+
+## Configuration File Location
+
+Kamal reads configuration from:
+- `config/deploy.yml` - Main configuration file
+- `config/deploy.<destination>.yml` - Destination-specific overrides (when using `-d` flag)
+
+The destination file is deep-merged with the base configuration, allowing you to override specific settings for different environments.
+
+## YAML Format
+
+Kamal configuration files use standard YAML syntax:
+
+```yaml
+service: my-app
+image: my-user/my-app
+
+servers:
+  web:
+    - 192.168.0.1
+
+registry:
+  server: ghcr.io
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+## ERB Templates
+
+Configuration files support ERB templating, allowing you to dynamically generate values:
+
+```yaml
+service: my-app
+image: <%= ENV['IMAGE_NAME'] || 'my-app' %>
+
+builder:
+  args:
+    RUBY_VERSION: <%= RUBY_VERSION %>
+    BUILD_TIME: <%= Time.now.iso8601 %>
+
+registry:
+  server: 1234567890.dkr.ecr.us-east-1.amazonaws.com
+  username: AWS
+  password: <%= %x(aws ecr get-login-password --region us-east-1) %>
+```
+
+<Note>
+ERB is evaluated when the configuration is loaded, so you can use any Ruby code.
+</Note>
+
+## Destinations
+
+Use destinations to manage different deployment environments:
+
+<CodeGroup>
+```yaml config/deploy.yml
+service: my-app
+image: my-user/my-app
+
+servers:
+  web:
+    - production-1.example.com
+```
+
+```yaml config/deploy.staging.yml
+servers:
+  web:
+    - staging-1.example.com
+    - staging-2.example.com
+```
+</CodeGroup>
+
+Deploy to staging with:
+
+```bash
+kamal deploy -d staging
+```
+
+## Required Configuration
+
+At minimum, your configuration must include:
+
+<ParamField path="service" type="string" required>
+  Service name used as the container name prefix. Must contain only alphanumeric characters, hyphens, and underscores.
+</ParamField>
+
+<ParamField path="image" type="string" required>
+  Docker image name (without registry or tag)
+</ParamField>
+
+<ParamField path="registry" type="object" required>
+  Container registry configuration. See [Registry Configuration](/configuration/registry).
+</ParamField>
+
+<ParamField path="servers" type="object">
+  Server configuration. At least one server or accessory must be defined. See [Server Configuration](/configuration/servers).
+</ParamField>
+
+## Configuration Extensions
+
+Kamal will reject unrecognized configuration keys. To use YAML anchors and aliases without errors, prefix extension blocks with `x-`:
+
+```yaml
+x-common-env: &common-env
+  RAILS_ENV: production
+  LOG_LEVEL: info
+
+env:
+  clear:
+    <<: *common-env
+    DATABASE_URL: postgres://...
+
+accessories:
+  redis:
+    env:
+      clear:
+        <<: *common-env
+```
+
+## Optional Root Configuration
+
+<Accordion title="Labels">
+  Additional labels to add to all containers:
+  
+  ```yaml
+  labels:
+    my-label: my-value
+    team: platform
+  ```
+</Accordion>
+
+<Accordion title="Volumes">
+  Persistent volumes to mount in all containers:
+  
+  ```yaml
+  volumes:
+    - /host/path:/container/path
+    - /data:/app/storage:ro
+  ```
+</Accordion>
+
+<Accordion title="Asset Path">
+  Path for asset bridging across deployments to avoid 404s during rollout:
+  
+  ```yaml
+  asset_path: /app/public/assets
+  ```
+  
+  Requires fingerprinted assets (hash in filename).
+</Accordion>
+
+<Accordion title="Require Destination">
+  Force all deployments to specify a destination:
+  
+  ```yaml
+  require_destination: true
+  ```
+</Accordion>
+
+<Accordion title="Primary Role">
+  Change the primary role (defaults to `web`):
+  
+  ```yaml
+  primary_role: workers
+  ```
+</Accordion>
+
+<Accordion title="Allow Empty Roles">
+  Allow roles with no servers:
+  
+  ```yaml
+  allow_empty_roles: true
+  ```
+</Accordion>
+
+<Accordion title="Retain Containers">
+  Number of old containers to keep (defaults to 5):
+  
+  ```yaml
+  retain_containers: 10
+  ```
+</Accordion>
+
+<Accordion title="Minimum Version">
+  Require a minimum Kamal version:
+  
+  ```yaml
+  minimum_version: 1.3.0
+  ```
+</Accordion>
+
+<Accordion title="Timeouts">
+  Configure deployment timeouts:
+  
+  ```yaml
+  readiness_delay: 7    # Seconds to wait after container starts (default: 7)
+  deploy_timeout: 30    # Seconds to wait for healthcheck (default: 30)
+  drain_timeout: 30     # Seconds to wait for connections to drain (default: 30)
+  ```
+</Accordion>
+
+<Accordion title="Run Directory">
+  Directory for Kamal runtime files on the host:
+  
+  ```yaml
+  run_directory: /etc/kamal
+  ```
+  
+  Defaults to `.kamal`.
+</Accordion>
+
+<Accordion title="Hooks Path">
+  Path to deployment hooks:
+  
+  ```yaml
+  hooks_path: .kamal/hooks
+  ```
+  
+  See [Hooks Configuration](/configuration/hooks).
+</Accordion>
+
+<Accordion title="Hooks Output">
+  Control hook output visibility:
+  
+  ```yaml
+  # Global setting
+  hooks_output: verbose
+  
+  # Per-hook settings
+  hooks_output:
+    pre-deploy: verbose
+    pre-build: quiet
+  ```
+  
+  Options: `quiet`, `verbose`
+</Accordion>
+
+<Accordion title="Secrets Path">
+  Path to secrets files:
+  
+  ```yaml
+  secrets_path: .kamal/secrets
+  ```
+</Accordion>
+
+<Accordion title="Error Pages Path">
+  Directory containing custom error pages for the proxy:
+  
+  ```yaml
+  error_pages_path: public
+  ```
+  
+  Files named `4xx.html` or `5xx.html` will be served.
+</Accordion>
+
+## Validation
+
+Kamal validates your configuration when you run commands. Common errors include:
+
+- Missing required keys (`service`, `image`, `registry`)
+- Invalid service name (must be alphanumeric with hyphens/underscores)
+- No servers defined for primary role
+- Unrecognized configuration keys (use `x-` prefix for extensions)
+- SSL on multiple hosts without custom certificates
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Servers" icon="server" href="/configuration/servers">
+    Configure your deployment servers and roles
+  </Card>
+  <Card title="Registry" icon="box" href="/configuration/registry">
+    Set up your container registry
+  </Card>
+  <Card title="Builder" icon="hammer" href="/configuration/builder">
+    Configure Docker image builds
+  </Card>
+</CardGroup>

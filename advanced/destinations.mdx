@@ -1,0 +1,602 @@
+---
+title: "Destinations"
+description: "Deploy multiple environments using destinations for staging, production, and more"
+---
+
+# Destinations
+
+Destinations allow you to deploy the same application to multiple environments (staging, production, etc.) from a single configuration file, with environment-specific overrides.
+
+## What Are Destinations?
+
+Destinations are environment variants that:
+- Share a base configuration
+- Override specific settings per environment
+- Use separate Docker images and container names
+- Can deploy to different servers
+- Maintain separate secrets
+
+<Note>
+Think of destinations as "environments" or "stages" for your application. Each destination creates isolated deployments with their own containers, volumes, and configuration.
+</Note>
+
+## Basic Destination Setup
+
+<Steps>
+  <Step title="Create Base Configuration">
+    Start with your main `config/deploy.yml`:
+    ```yaml
+    service: myapp
+    image: myorg/myapp
+    
+    servers:
+      web:
+        hosts:
+          - 192.168.1.10
+    
+    registry:
+      username:
+        - DOCKER_USERNAME
+      password:
+        - DOCKER_PASSWORD
+    ```
+  </Step>
+  
+  <Step title="Create Destination Override">
+    Create `config/deploy.staging.yml`:
+    ```yaml
+    servers:
+      web:
+        hosts:
+          - staging.example.com
+    ```
+  </Step>
+  
+  <Step title="Deploy to Destination">
+    ```bash
+    # Deploy to staging
+    kamal deploy -d staging
+    
+    # Deploy to production (uses base config)
+    kamal deploy
+    ```
+  </Step>
+</Steps>
+
+**Reference**: See `lib/kamal/configuration.rb:20-30` for destination loading.
+
+## How Destinations Work
+
+When you specify a destination:
+
+1. **Base Config Loaded**: `config/deploy.yml` is loaded first
+2. **Destination Config Merged**: `config/deploy.{destination}.yml` is deep-merged on top
+3. **Environment Variable Set**: `KAMAL_DESTINATION` environment variable is set
+4. **Unique Naming**: Containers, images, and resources are namespaced by destination
+
+**Reference**: See `lib/kamal/configuration.rb:20-26` for config merging.
+
+## Destination Naming
+
+Each destination gets unique resource names:
+
+```yaml
+service: myapp
+# Destination: staging
+```
+
+Generates:
+- **Container**: `myapp-staging-web-v1`
+- **Service Label**: `service=myapp,destination=staging`
+- **Combined Name**: `myapp-staging`
+
+**Reference**: See `lib/kamal/configuration.rb:115-117` for service and destination naming.
+
+<Tabs>
+  <Tab title="Production (no destination)">
+    ```
+    Container: myapp-web-v1
+    Service: myapp
+    Label: service=myapp
+    ```
+  </Tab>
+  
+  <Tab title="Staging">
+    ```
+    Container: myapp-staging-web-v1
+    Service: myapp-staging
+    Label: service=myapp,destination=staging
+    ```
+  </Tab>
+  
+  <Tab title="QA">
+    ```
+    Container: myapp-qa-web-v1
+    Service: myapp-qa
+    Label: service=myapp,destination=qa
+    ```
+  </Tab>
+</Tabs>
+
+**Reference**: See `lib/kamal/configuration/role.rb:124-126` for container naming.
+
+## Common Destination Patterns
+
+### Staging Environment
+
+<CodeGroup>
+```yaml config/deploy.yml
+service: myapp
+image: myorg/myapp
+
+servers:
+  web:
+    hosts:
+      - prod1.example.com
+      - prod2.example.com
+
+registry:
+  username:
+    - DOCKER_USERNAME
+  password:
+    - DOCKER_PASSWORD
+
+env:
+  RAILS_ENV: production
+  RAILS_LOG_LEVEL: info
+```
+
+```yaml config/deploy.staging.yml
+servers:
+  web:
+    hosts:
+      - staging.example.com
+
+env:
+  RAILS_ENV: staging
+  RAILS_LOG_LEVEL: debug
+```
+</CodeGroup>
+
+Deploy:
+```bash
+# Production
+kamal deploy
+
+# Staging
+kamal deploy -d staging
+```
+
+### Multiple Geographic Regions
+
+<CodeGroup>
+```yaml config/deploy.yml
+service: myapp
+image: myorg/myapp
+
+servers:
+  web:
+    hosts:
+      - us-east-1.example.com
+
+registry:
+  server: registry.example.com
+```
+
+```yaml config/deploy.eu.yml
+servers:
+  web:
+    hosts:
+      - eu-west-1.example.com
+
+registry:
+  server: eu-registry.example.com
+```
+
+```yaml config/deploy.asia.yml
+servers:
+  web:
+    hosts:
+      - ap-southeast-1.example.com
+
+registry:
+  server: asia-registry.example.com
+```
+</CodeGroup>
+
+Deploy:
+```bash
+kamal deploy             # US
+kamal deploy -d eu       # Europe
+kamal deploy -d asia     # Asia
+```
+
+### Customer-Specific Deployments
+
+<CodeGroup>
+```yaml config/deploy.yml
+# Base configuration
+service: myapp
+image: myorg/myapp
+
+servers:
+  web:
+    hosts:
+      - shared.example.com
+```
+
+```yaml config/deploy.acme.yml
+servers:
+  web:
+    hosts:
+      - acme.example.com
+
+env:
+  TENANT_ID: acme
+  DATABASE_URL:
+    - ACME_DATABASE_URL
+```
+
+```yaml config/deploy.globex.yml
+servers:
+  web:
+    hosts:
+      - globex.example.com
+
+env:
+  TENANT_ID: globex
+  DATABASE_URL:
+    - GLOBEX_DATABASE_URL
+```
+</CodeGroup>
+
+## Destination-Specific Secrets
+
+Secrets are automatically scoped by destination:
+
+```bash
+# .kamal/secrets
+DOCKER_USERNAME=myuser
+DOCKER_PASSWORD=prod-password
+
+# .kamal/secrets-staging
+DOCKER_PASSWORD=staging-password
+DATABASE_URL=postgres://staging-db/myapp
+```
+
+When deploying:
+```bash
+# Uses .kamal/secrets
+kamal deploy
+
+# Uses .kamal/secrets + .kamal/secrets-staging (merged)
+kamal deploy -d staging
+```
+
+**Reference**: Secrets are loaded per destination in `lib/kamal/configuration.rb:61`.
+
+## Environment Variable Access
+
+The `KAMAL_DESTINATION` environment variable is available in ERB templates:
+
+```yaml
+service: myapp
+image: myorg/myapp-<%= ENV['KAMAL_DESTINATION'] || 'production' %>
+
+servers:
+  web:
+    hosts:
+      <% if ENV['KAMAL_DESTINATION'] == 'staging' %>
+      - staging.example.com
+      <% else %>
+      - prod1.example.com
+      - prod2.example.com
+      <% end %>
+
+env:
+  LOG_LEVEL: <%= ENV['KAMAL_DESTINATION'] == 'staging' ? 'debug' : 'info' %>
+```
+
+**Reference**: See `lib/kamal/configuration.rb:20-21` for `KAMAL_DESTINATION` setting.
+
+## Destination Commands
+
+All Kamal commands support the `-d` flag:
+
+```bash
+# Deploy
+kamal deploy -d staging
+
+# Rollback
+kamal rollback -d staging
+
+# Access console
+kamal app exec -d staging -i bin/rails console
+
+# View logs
+kamal app logs -d staging
+
+# Check status
+kamal app details -d staging
+
+# Reboot (restart)
+kamal app boot -d staging
+```
+
+## Destination Validation
+
+Kamal validates destination configurations:
+
+<Warning>
+If you reference a destination in commands that doesn't have a config file, Kamal will error:
+
+```bash
+kamal deploy -d nonexistent
+# Error: Configuration file not found in config/deploy.nonexistent.yml
+```
+</Warning>
+
+**Reference**: See `lib/kamal/configuration.rb:44-46` for validation.
+
+## Advanced Destination Patterns
+
+### Shared Destinations on Same Servers
+
+Run multiple environments on the same servers:
+
+```yaml
+# config/deploy.yml
+service: myapp
+servers:
+  web:
+    hosts:
+      - server.example.com
+    proxy:
+      hosts:
+        - myapp.example.com
+
+# config/deploy.staging.yml
+servers:
+  web:
+    hosts:
+      - server.example.com  # Same server!
+    proxy:
+      hosts:
+        - staging.myapp.example.com
+      app_port: 3001  # Different port
+```
+
+Both environments run on the same server with different containers and proxy configurations.
+
+### Destination-Specific Roles
+
+```yaml
+# config/deploy.yml
+servers:
+  web:
+    hosts:
+      - web.example.com
+  
+  worker:
+    hosts:
+      - worker.example.com
+
+# config/deploy.staging.yml
+servers:
+  web:
+    hosts:
+      - staging.example.com
+  
+  # No workers in staging
+```
+
+### Per-Destination Builders
+
+```yaml
+# config/deploy.yml
+builder:
+  remote: ssh://prod-builder.example.com
+  arch:
+    - amd64
+    - arm64
+
+# config/deploy.staging.yml
+builder:
+  # Build locally for staging
+  driver: docker
+  arch: amd64
+```
+
+## Destination Isolation
+
+Destinations are completely isolated:
+
+| Resource | Isolated? | Example |
+|----------|-----------|----------|
+| Containers | ✓ | `myapp-staging-web-v1` vs `myapp-web-v1` |
+| Docker Images | ✓ | `myorg/myapp:v1` vs `myorg/myapp:staging-v1` (if customized) |
+| Volumes | ✓ | Named with destination prefix |
+| Networks | ✓ | Named with destination prefix |
+| Secrets | ✓ | Separate `.kamal/secrets-{destination}` files |
+| Proxy Config | ✓ | Different hosts, ports, settings |
+| Environment Variables | ✓ | Merged per destination |
+
+## Destination Best Practices
+
+<Check>✓ Use short, lowercase destination names (`staging`, `qa`, `prod`)</Check>
+<Check>✓ Keep destination configs minimal (only override what's different)</Check>
+<Check>✓ Use separate secrets files for sensitive data</Check>
+<Check>✓ Document which destinations exist in your README</Check>
+<Check>✓ Use CI/CD to automate destination deployments</Check>
+<Check>✓ Test configuration changes in staging before production</Check>
+
+## Destination-Aware CI/CD
+
+<Tabs>
+  <Tab title="GitHub Actions">
+    ```yaml
+    name: Deploy
+    on:
+      push:
+        branches:
+          - main
+          - staging
+    
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          
+          - name: Deploy to staging
+            if: github.ref == 'refs/heads/staging'
+            run: |
+              kamal deploy -d staging
+          
+          - name: Deploy to production
+            if: github.ref == 'refs/heads/main'
+            run: |
+              kamal deploy
+    ```
+  </Tab>
+  
+  <Tab title="GitLab CI">
+    ```yaml
+    stages:
+      - deploy
+    
+    deploy:staging:
+      stage: deploy
+      script:
+        - kamal deploy -d staging
+      only:
+        - staging
+    
+    deploy:production:
+      stage: deploy
+      script:
+        - kamal deploy
+      only:
+        - main
+    ```
+  </Tab>
+  
+  <Tab title="Manual Deployment">
+    ```bash
+    #!/bin/bash
+    # deploy.sh
+    
+    DESTINATION=$1
+    
+    if [ -z "$DESTINATION" ]; then
+      echo "Usage: ./deploy.sh [staging|production]"
+      exit 1
+    fi
+    
+    if [ "$DESTINATION" = "production" ]; then
+      echo "Deploying to production..."
+      kamal deploy
+    else
+      echo "Deploying to $DESTINATION..."
+      kamal deploy -d "$DESTINATION"
+    fi
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting Destinations
+
+### Debugging Configuration
+
+View the merged configuration:
+
+```bash
+# View production config
+kamal config
+
+# View staging config
+kamal config -d staging
+```
+
+### Checking Destination Status
+
+```bash
+# Check which containers are running
+kamal app details -d staging
+
+# Compare with production
+kamal app details
+```
+
+### Wrong Destination Deployed
+
+<AccordionGroup>
+  <Accordion title="Deployed staging to production servers">
+    **Problem**: Ran `kamal deploy -d staging` but containers appeared on production servers.
+    
+    **Solution**: Check your `config/deploy.staging.yml` - it should override the `hosts` configuration.
+  </Accordion>
+  
+  <Accordion title="Can't access staging deployment">
+    **Problem**: Staging deployment succeeded but can't access the application.
+    
+    **Solutions**:
+    1. Verify proxy configuration: `kamal config -d staging | grep -A 10 proxy`
+    2. Check firewall rules on staging servers
+    3. Verify DNS points to staging servers
+    4. Check container logs: `kamal app logs -d staging`
+  </Accordion>
+</AccordionGroup>
+
+## Migrating to Destinations
+
+If you have separate config files that aren't destinations:
+
+<Steps>
+  <Step title="Identify Common Configuration">
+    Find settings shared across environments
+  </Step>
+  
+  <Step title="Create Base Config">
+    Move common settings to `config/deploy.yml`
+  </Step>
+  
+  <Step title="Create Destination Overrides">
+    Create `config/deploy.{destination}.yml` with only environment-specific settings
+  </Step>
+  
+  <Step title="Test Each Destination">
+    ```bash
+    kamal config -d staging
+    kamal config -d production
+    ```
+  </Step>
+  
+  <Step title="Update Deployment Scripts">
+    Update CI/CD to use `-d` flag
+  </Step>
+</Steps>
+
+## Destination Limitations
+
+<Warning>
+- Destination names cannot contain dots (`.`) or special characters
+- All destinations must use the same base image (but can tag differently)
+- Secrets are additive (base + destination) - you cannot "unset" a base secret
+- Server hosts must be explicitly overridden (they don't merge)
+</Warning>
+
+## Alternative to Destinations
+
+If destinations don't fit your needs, consider:
+
+1. **Separate repositories**: Completely independent deployments
+2. **Branches with separate configs**: Different `config/deploy.yml` per branch
+3. **Environment variables only**: Single config, all differences via env vars
+4. **Multiple service names**: Different services for different environments
+
+Destinations are best when you want:
+- Shared base configuration
+- Easy comparison between environments
+- Consistent deployment process
+- Single repository for all environments

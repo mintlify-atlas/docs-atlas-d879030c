@@ -1,0 +1,177 @@
+---
+title: kamal app details
+description: Show detailed information about app containers
+---
+
+## Overview
+
+The `kamal app details` command displays detailed information about your app containers running on servers. It shows container configuration, status, ports, and other Docker metadata.
+
+## Usage
+
+```bash
+kamal app details [OPTIONS]
+```
+
+<Note>
+  This command may be deprecated in the future in favor of `kamal app containers`.
+</Note>
+
+## Output Information
+
+The command displays:
+
+- Container ID
+- Image name and tag
+- Container status (running, stopped, etc.)
+- Port mappings
+- Network configuration
+- Environment variables
+- Volume mounts
+- Resource limits
+
+## Options
+
+<ParamField path="--version" type="string">
+  Show details for a specific app version
+  
+  ```bash
+  kamal app details --version v1.2.3
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Show details from specific hosts (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app details --hosts web1.example.com,web2.example.com
+  kamal app details --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Show details for specific roles (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app details --roles web
+  kamal app details --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean">
+  Show details only from the primary host
+  
+  ```bash
+  kamal app details --primary
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal output without host labels
+  
+  ```bash
+  kamal app details --quiet
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app details --verbose
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Show all app details
+kamal app details
+```
+
+```bash Details from specific host
+kamal app details --hosts web1.example.com
+```
+
+```bash Details for specific role
+kamal app details --roles worker
+```
+
+```bash Details from primary host only
+kamal app details --primary
+```
+
+```bash Quiet output
+kamal app details --quiet
+```
+
+</CodeGroup>
+
+## Sample Output
+
+```json
+[
+  {
+    "Id": "a1b2c3d4e5f6",
+    "Image": "registry.example.com/myapp:v1.2.3",
+    "Status": "Up 2 hours",
+    "Ports": "0.0.0.0:3000->3000/tcp",
+    "Names": "myapp-web-v1.2.3",
+    "State": "running",
+    "Created": "2026-03-11T10:30:00Z"
+  }
+]
+```
+
+## Understanding the Output
+
+Each host will display its container details:
+
+<Tabs>
+  <Tab title="Container ID">
+    The unique Docker container identifier. Use this with `docker` commands for direct container management.
+  </Tab>
+  
+  <Tab title="Image">
+    The full image name including registry, repository, and tag that the container is running.
+  </Tab>
+  
+  <Tab title="Status">
+    Current container state and uptime (e.g., "Up 2 hours", "Exited (0) 5 minutes ago").
+  </Tab>
+  
+  <Tab title="Ports">
+    Port mappings showing how container ports are exposed on the host.
+  </Tab>
+</Tabs>
+
+## Use Cases
+
+**Troubleshooting**: Verify containers are running the correct image version
+
+```bash
+kamal app details --roles web
+```
+
+**Audit**: Check configuration across all hosts
+
+```bash
+kamal app details --verbose
+```
+
+**Quick check**: View status on primary host
+
+```bash
+kamal app details --primary
+```
+
+<Tip>
+  For a simpler list view of running containers, use `kamal app containers` instead. For version information only, use `kamal app version`.
+</Tip>
+
+## Related Commands
+
+- [`kamal app containers`](/commands/app/containers) - List app containers
+- [`kamal app version`](/commands/app/version) - Show running app version
+- [`kamal app logs`](/commands/app/logs) - View container logs

@@ -1,0 +1,161 @@
+---
+title: kamal app stop
+description: Stop app containers on servers
+---
+
+## Overview
+
+The `kamal app stop` command stops running app containers on your servers. The containers remain on the servers but are stopped, and can be restarted later with `kamal app start`.
+
+## Usage
+
+```bash
+kamal app stop [OPTIONS]
+```
+
+## How It Works
+
+1. If running with a proxy, removes the container from the proxy routing
+2. Stops the app container on each server
+3. Records the stop action in the audit log
+
+<Note>
+  Stopping the app makes it unavailable but preserves the containers. To completely remove containers and images, use `kamal app remove` instead.
+</Note>
+
+## Options
+
+<ParamField path="--version" type="string">
+  Run commands against a specific app version
+  
+  ```bash
+  kamal app stop --version v1.2.3
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Run commands on specific hosts instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app stop --hosts web1.example.com,web2.example.com
+  kamal app stop --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Run commands on specific roles instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app stop --roles web
+  kamal app stop --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean">
+  Run commands only on the primary host
+  
+  ```bash
+  kamal app stop --primary
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app stop --verbose
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal logging output
+  
+  ```bash
+  kamal app stop --quiet
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Stop all app containers
+kamal app stop
+```
+
+```bash Stop on specific hosts
+kamal app stop --hosts web1.example.com
+```
+
+```bash Stop specific role
+kamal app stop --roles worker
+```
+
+```bash Stop with quiet output
+kamal app stop --quiet
+```
+
+</CodeGroup>
+
+## Use Cases
+
+<Tabs>
+  <Tab title="Maintenance Window">
+    Stop the app temporarily during a maintenance window:
+    
+    ```bash
+    # Put app in maintenance mode and stop
+    kamal app maintenance
+    kamal app stop
+    
+    # Later, restart
+    kamal app start
+    kamal app live
+    ```
+  </Tab>
+  
+  <Tab title="Troubleshooting">
+    Stop specific roles to investigate issues:
+    
+    ```bash
+    # Stop just the worker role
+    kamal app stop --roles worker
+    
+    # Check logs and investigate
+    kamal app logs --roles worker
+    
+    # Restart when ready
+    kamal app start --roles worker
+    ```
+  </Tab>
+  
+  <Tab title="Resource Management">
+    Stop apps on specific hosts to free up resources:
+    
+    ```bash
+    # Stop on hosts that need maintenance
+    kamal app stop --hosts "host1.example.com,host2.example.com"
+    ```
+  </Tab>
+</Tabs>
+
+## Proxy Integration
+
+If your role is configured with a proxy (like Kamal Proxy), the stop command will:
+
+1. Get the current running version and container ID
+2. Remove the endpoint from the proxy routing (if found)
+3. Stop the container
+
+This ensures traffic is properly drained before the container stops.
+
+<Tip>
+  For a graceful shutdown with connection draining, use `kamal app maintenance` before stopping to give in-flight requests time to complete.
+</Tip>
+
+## Related Commands
+
+- [`kamal app start`](/commands/app/start) - Start stopped containers
+- [`kamal app boot`](/commands/app/boot) - Boot or reboot the app
+- [`kamal app maintenance`](/commands/app/maintenance) - Put app in maintenance mode
+- [`kamal app remove`](/commands/app/remove) - Remove containers and images

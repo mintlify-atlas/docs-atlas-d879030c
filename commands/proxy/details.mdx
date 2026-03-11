@@ -1,0 +1,261 @@
+---
+title: kamal proxy details
+description: Display detailed information about the kamal-proxy container
+---
+
+The `kamal proxy details` command displays comprehensive information about the kamal-proxy container running on your servers, including configuration, status, and runtime details.
+
+## Usage
+
+```bash
+kamal proxy details
+```
+
+## What It Shows
+
+The details command displays the output of `docker ps` filtered for the kamal-proxy container, showing:
+
+- **Container ID** - Unique identifier for the container
+- **Image** - The kamal-proxy image and tag being used
+- **Status** - Current state (running, stopped, etc.) and uptime
+- **Ports** - Published port mappings (80:80, 443:443, etc.)
+- **Names** - Container name (kamal-proxy)
+
+## Example Output
+
+```bash
+$ kamal proxy details
+Host 192.168.1.10: Proxy
+CONTAINER ID   IMAGE                        COMMAND                  CREATED       STATUS       PORTS                                      NAMES
+abc123def456   basecamp/kamal-proxy:v0.8.0  "/usr/local/bin/kamal…"  2 days ago    Up 2 days    0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp  kamal-proxy
+```
+
+## Multiple Hosts
+
+When you have multiple proxy hosts, details are shown for each server:
+
+```bash
+$ kamal proxy details
+Host 192.168.1.10: Proxy
+CONTAINER ID   IMAGE                        CREATED     STATUS      PORTS                    NAMES
+abc123def456   basecamp/kamal-proxy:v0.8.0  2 days ago  Up 2 days   0.0.0.0:80->80/tcp...   kamal-proxy
+
+Host 192.168.1.11: Proxy
+CONTAINER ID   IMAGE                        CREATED     STATUS      PORTS                    NAMES
+789ghi012jkl   basecamp/kamal-proxy:v0.8.0  2 days ago  Up 2 days   0.0.0.0:80->80/tcp...   kamal-proxy
+```
+
+## Quiet Mode
+
+The command respects the global `--quiet` flag:
+
+```bash
+kamal proxy details --quiet
+# Shows minimal output without host labels
+```
+
+## When to Use
+
+**Use `kamal proxy details` when:**
+- Verifying the proxy is running
+- Checking which proxy version is deployed
+- Confirming port mappings are correct
+- Troubleshooting proxy issues
+- Verifying successful proxy boot or reboot
+- Documenting your deployment configuration
+
+## Interpreting the Output
+
+### Container Status
+
+The STATUS column shows the container state:
+
+- **Up X days/hours** - Container is running normally
+- **Restarting** - Container is in a restart loop (check logs)
+- **Exited** - Container has stopped (check logs for errors)
+
+### Port Mappings
+
+The PORTS column shows published ports:
+
+```
+0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+```
+
+This indicates:
+- Port 80 on all host interfaces (`0.0.0.0`) maps to container port 80
+- Port 443 on all host interfaces maps to container port 443
+
+<Note>
+If you configured custom ports in your `deploy.yml`, you'll see those instead of 80 and 443.
+</Note>
+
+### Image Version
+
+The IMAGE column shows the exact image being used:
+
+```
+basecamp/kamal-proxy:v0.8.0
+```
+
+If you see an older version and deployments are failing with version errors, run:
+
+```bash
+kamal proxy reboot
+```
+
+## Troubleshooting with Details
+
+### Proxy Not Running
+
+If the details command shows no output:
+
+```bash
+$ kamal proxy details
+Host 192.168.1.10: Proxy
+[empty output]
+```
+
+The proxy container isn't running. Start it with:
+
+```bash
+kamal proxy boot
+```
+
+### Container Restarting
+
+If STATUS shows "Restarting":
+
+```bash
+STATUS
+Restarting (1) 3 seconds ago
+```
+
+Check the logs for errors:
+
+```bash
+kamal proxy logs
+```
+
+Common causes:
+- Port conflicts (another service using 80 or 443)
+- Invalid configuration
+- Missing dependencies
+
+### Wrong Version
+
+If the IMAGE shows an outdated version:
+
+```bash
+IMAGE
+basecamp/kamal-proxy:v0.4.0
+```
+
+Update the proxy:
+
+```bash
+kamal proxy reboot
+```
+
+### Custom Ports Not Showing
+
+If you configured custom ports but see default ports (80, 443), your configuration may not have been applied. Reboot the proxy:
+
+```bash
+kamal proxy reboot
+```
+
+## Additional Information Commands
+
+For more detailed proxy information, use these related commands:
+
+### View Logs
+
+```bash
+kamal proxy logs
+```
+
+Shows recent proxy log entries.
+
+### Follow Logs
+
+```bash
+kamal proxy logs --follow
+```
+
+Tail the proxy logs in real-time.
+
+### Inspect Container
+
+For full Docker inspect output:
+
+```bash
+kamal app exec --reuse 'docker inspect kamal-proxy'
+```
+
+### Check Version
+
+The proxy version is shown in the IMAGE column of the details output. You can also check the version directly:
+
+```bash
+kamal app exec --reuse 'docker exec kamal-proxy kamal-proxy --version'
+```
+
+## Filtering by Host
+
+To show details for specific hosts only:
+
+```bash
+kamal proxy details --hosts 192.168.1.10
+```
+
+Or multiple hosts:
+
+```bash
+kamal proxy details --hosts 192.168.1.10,192.168.1.11
+```
+
+## Scripting with Details
+
+The details output can be parsed in scripts:
+
+```bash
+#!/bin/bash
+
+# Check if proxy is running
+if kamal proxy details | grep -q "Up"; then
+  echo "Proxy is running"
+else
+  echo "Proxy is not running"
+  kamal proxy boot
+fi
+```
+
+<Warning>
+The output format may change between Kamal versions. For production scripts, consider using `docker ps` directly via `kamal app exec`.
+</Warning>
+
+## Configuration Display
+
+The details command shows runtime state, not configuration. To view proxy configuration:
+
+```bash
+# View deploy.yml configuration
+cat config/deploy.yml
+
+# View container environment variables
+kamal app exec --reuse 'docker exec kamal-proxy env'
+```
+
+## Related Commands
+
+- [`kamal proxy logs`](/commands/proxy/logs) - View proxy logs
+- [`kamal proxy boot`](/commands/proxy/boot) - Start the proxy
+- [`kamal proxy reboot`](/commands/proxy/reboot) - Restart the proxy
+- [`kamal proxy remove`](/commands/proxy/remove) - Remove the proxy
+
+## See Also
+
+- [Proxy Configuration](/configuration/proxy)
+- [Troubleshooting Logs](/troubleshooting/logs)
+- [kamal-proxy Documentation](https://github.com/basecamp/kamal-proxy)

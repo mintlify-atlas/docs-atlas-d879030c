@@ -1,0 +1,486 @@
+---
+title: Deployment Hooks
+description: Configure pre and post deployment hooks for custom actions
+---
+
+Hooks are executable scripts that run at specific points during Kamal operations. They allow you to execute custom logic before or after deployments, builds, and other commands.
+
+## Overview
+
+Hooks are stored in the `.kamal/hooks` directory (configurable via `hooks_path`) and are executed locally on the machine running Kamal.
+
+```bash
+.kamal/hooks/
+├── pre-connect
+├── pre-build
+├── pre-deploy
+├── post-deploy
+├── pre-proxy-reboot
+└── post-proxy-reboot
+```
+
+## Hooks Path
+
+<ParamField path="hooks_path" type="string" default=".kamal/hooks">
+  Directory containing hook scripts.
+</ParamField>
+
+```yaml
+hooks_path: .kamal/hooks
+```
+
+## Available Hooks
+
+### Connection Hooks
+
+<ParamField path="pre-connect" type="executable">
+  Runs before connecting to servers. Has access to secrets.
+</ParamField>
+
+Use cases:
+- Fetch credentials from vault
+- Setup VPN connection
+- Validate environment
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-connect
+
+# Fetch secrets from 1Password
+op signin
+
+# Connect to VPN
+vpn-connect production
+```
+
+### Build Hooks
+
+<ParamField path="pre-build" type="executable">
+  Runs before building the Docker image.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-build
+
+# Run tests
+bundle exec rspec
+
+# Lint code
+bundle exec rubocop
+
+# Build assets
+bundle exec rake assets:precompile
+```
+
+<ParamField path="post-build" type="executable">
+  Runs after building the Docker image.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-build
+
+# Scan image for vulnerabilities
+docker scan $KAMAL_RECORDED_IMAGE
+
+# Push to additional registry
+docker tag $KAMAL_RECORDED_IMAGE backup-registry/app:$KAMAL_VERSION
+docker push backup-registry/app:$KAMAL_VERSION
+```
+
+### Deployment Hooks
+
+<ParamField path="pre-deploy" type="executable">
+  Runs before deploying containers.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-deploy
+
+# Notify team
+slack-notify "Starting deployment of $KAMAL_VERSION"
+
+# Put app in maintenance mode
+kamal app exec -p "rails runner 'MaintenanceMode.enable'"
+
+# Create database backup
+kamal accessory exec mysql "mysqldump --all-databases > /backup/pre-deploy-$(date +%s).sql"
+```
+
+<ParamField path="post-deploy" type="executable">
+  Runs after successful deployment.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+# Run migrations
+kamal app exec -p "rails db:migrate"
+
+# Clear caches
+kamal app exec -p "rails runner 'Rails.cache.clear'"
+
+# Disable maintenance mode
+kamal app exec -p "rails runner 'MaintenanceMode.disable'"
+
+# Notify team
+slack-notify "✅ Deployment of $KAMAL_VERSION completed"
+
+# Tag release
+gh release create $KAMAL_VERSION --notes "Deployed at $(date)"
+```
+
+### Application Hooks
+
+<ParamField path="pre-app-boot" type="executable">
+  Runs before booting application containers.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-app-boot
+
+# Warm up caches
+kamal app exec "rake cache:warm"
+```
+
+### Proxy Hooks
+
+<ParamField path="pre-proxy-reboot" type="executable">
+  Runs before rebooting the proxy.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-proxy-reboot
+
+# Notify monitoring
+curl -X POST monitoring.example.com/events \
+  -d '{"event": "proxy_reboot_start"}'
+```
+
+<ParamField path="post-proxy-reboot" type="executable">
+  Runs after rebooting the proxy.
+</ParamField>
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-proxy-reboot
+
+# Verify proxy is healthy
+curl -f https://app.example.com/up || exit 1
+
+# Notify monitoring
+curl -X POST monitoring.example.com/events \
+  -d '{"event": "proxy_reboot_complete"}'
+```
+
+## Hook Environment Variables
+
+Hooks have access to environment variables with deployment details:
+
+```bash
+#!/usr/bin/env bash
+
+echo "Service: $KAMAL_SERVICE"
+echo "Version: $KAMAL_VERSION"
+echo "Hosts: $KAMAL_HOSTS"
+echo "Role: $KAMAL_ROLE"
+echo "Destination: $KAMAL_DESTINATION"
+echo "Image: $KAMAL_RECORDED_IMAGE"
+echo "Registry: $KAMAL_REGISTRY"
+```
+
+### Available Variables
+
+- `KAMAL_SERVICE` - Service name from config
+- `KAMAL_VERSION` - Current version being deployed
+- `KAMAL_HOSTS` - Comma-separated list of hosts
+- `KAMAL_ROLE` - Current role name
+- `KAMAL_DESTINATION` - Deployment destination
+- `KAMAL_RECORDED_IMAGE` - Full image name with tag
+- `KAMAL_REGISTRY` - Registry server
+
+### Secrets in Hooks
+
+The `pre-connect` hook has access to all secrets from `.kamal/secrets`:
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-connect
+
+# Access secrets
+echo "Registry: $KAMAL_REGISTRY_PASSWORD"
+echo "Database: $DATABASE_PASSWORD"
+```
+
+<Warning>
+Other hooks do not have automatic access to secrets. Use `pre-connect` for secret-dependent operations.
+</Warning>
+
+## Hook Output Control
+
+<ParamField path="hooks_output" type="string | object">
+  Control visibility of hook output.
+</ParamField>
+
+### Global Setting
+
+```yaml
+hooks_output: verbose  # or :quiet
+```
+
+**Options:**
+- `verbose` - Show all hook output
+- `quiet` - Hide hook output
+
+### Per-Hook Settings
+
+```yaml
+hooks_output:
+  pre-build: verbose
+  pre-deploy: verbose
+  post-deploy: verbose
+  pre-connect: quiet
+  post-proxy-reboot: quiet
+```
+
+<Note>
+CLI flags (`-v`, `-q`) override these settings. Failed hooks always show output in error messages.
+</Note>
+
+## Making Hooks Executable
+
+Hooks must be executable:
+
+```bash
+chmod +x .kamal/hooks/pre-deploy
+chmod +x .kamal/hooks/post-deploy
+```
+
+Or make all hooks executable:
+
+```bash
+chmod +x .kamal/hooks/*
+```
+
+## Hook Examples
+
+<Accordion title="Slack Notifications">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-deploy
+
+SLACK_WEBHOOK="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+curl -X POST $SLACK_WEBHOOK \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"text\": \"🚀 Starting deployment of $KAMAL_SERVICE v$KAMAL_VERSION to $KAMAL_DESTINATION\"
+  }"
+```
+
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+SLACK_WEBHOOK="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+curl -X POST $SLACK_WEBHOOK \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"text\": \"✅ Deployment of $KAMAL_SERVICE v$KAMAL_VERSION completed successfully\"
+  }"
+```
+</Accordion>
+
+<Accordion title="Run Database Migrations">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+set -e
+
+echo "Running database migrations..."
+kamal app exec -p "rails db:migrate"
+
+echo "Migrations completed successfully"
+```
+</Accordion>
+
+<Accordion title="Security Scanning">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-build
+
+set -e
+
+echo "Scanning image for vulnerabilities..."
+trivy image --severity HIGH,CRITICAL $KAMAL_RECORDED_IMAGE
+
+echo "Security scan passed"
+```
+</Accordion>
+
+<Accordion title="Automated Testing">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-build
+
+set -e
+
+echo "Running test suite..."
+bundle exec rspec
+
+echo "Running linter..."
+bundle exec rubocop
+
+echo "All checks passed"
+```
+</Accordion>
+
+<Accordion title="Backup Before Deploy">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/pre-deploy
+
+set -e
+
+BACKUP_FILE="backup-$(date +%Y%m%d-%H%M%S).sql"
+
+echo "Creating database backup: $BACKUP_FILE"
+kamal accessory exec mysql "mysqldump myapp_production > /backups/$BACKUP_FILE"
+
+echo "Backup created successfully"
+```
+</Accordion>
+
+<Accordion title="Health Check After Deploy">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+set -e
+
+echo "Waiting for application to be healthy..."
+sleep 5
+
+for host in $(echo $KAMAL_HOSTS | tr ',' ' '); do
+  echo "Checking $host..."
+  curl -f -m 10 https://$host/up || {
+    echo "Health check failed for $host"
+    exit 1
+  }
+  echo "✓ $host is healthy"
+done
+
+echo "All hosts are healthy"
+```
+</Accordion>
+
+<Accordion title="Tag GitHub Release">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+set -e
+
+if [ "$KAMAL_DESTINATION" = "production" ]; then
+  echo "Creating GitHub release for $KAMAL_VERSION"
+  
+  gh release create "$KAMAL_VERSION" \
+    --title "Release $KAMAL_VERSION" \
+    --notes "Deployed to production on $(date)" \
+    --verify-tag
+  
+  echo "GitHub release created"
+fi
+```
+</Accordion>
+
+<Accordion title="Sentry Release Tracking">
+```bash
+#!/usr/bin/env bash
+# .kamal/hooks/post-deploy
+
+set -e
+
+export SENTRY_ORG="your-org"
+export SENTRY_PROJECT="your-project"
+
+echo "Creating Sentry release $KAMAL_VERSION"
+
+sentry-cli releases new "$KAMAL_VERSION"
+sentry-cli releases set-commits "$KAMAL_VERSION" --auto
+sentry-cli releases finalize "$KAMAL_VERSION"
+sentry-cli releases deploys "$KAMAL_VERSION" new -e "$KAMAL_DESTINATION"
+
+echo "Sentry release tracking completed"
+```
+</Accordion>
+
+## Debugging Hooks
+
+Enable verbose output for debugging:
+
+```yaml
+hooks_output: verbose
+```
+
+Or use the `-v` flag:
+
+```bash
+kamal deploy -v
+```
+
+Add debugging to your hooks:
+
+```bash
+#!/usr/bin/env bash
+set -x  # Print commands as they execute
+set -e  # Exit on error
+
+# Your hook code here
+```
+
+## Hook Best Practices
+
+<Note>
+**Use `set -e`**: Make hooks fail fast by exiting on any error.
+</Note>
+
+<Note>
+**Make Idempotent**: Hooks should be safe to run multiple times.
+</Note>
+
+<Note>
+**Keep Fast**: Long-running hooks slow down deployments. Move heavy work to background jobs.
+</Note>
+
+<Warning>
+**Test Thoroughly**: Failed hooks can block deployments. Test them separately before relying on them.
+</Warning>
+
+<Note>
+**Version Control**: Commit hooks to your repository so the team shares the same deployment process.
+</Note>
+
+## Skipping Hooks
+
+Skip hooks during deployment:
+
+```bash
+kamal deploy --skip-hooks
+```
+
+<Warning>
+Use `--skip-hooks` carefully. Skipping hooks may bypass important safety checks.
+</Warning>
+
+## Related Configuration
+
+- [Overview](/configuration/overview) - Configure hooks path and output
+- [Environment Variables](/configuration/environment) - Access secrets in hooks

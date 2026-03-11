@@ -1,0 +1,472 @@
+---
+title: Environment Variables
+description: Configure environment variables and secrets for your application
+---
+
+Environment variables can be set directly in the Kamal configuration file or loaded from `.kamal/secrets`.
+
+## Basic Configuration
+
+Set environment variables directly in the configuration:
+
+```yaml
+env:
+  DATABASE_HOST: mysql-db1
+  DATABASE_PORT: 3306
+  RAILS_ENV: production
+```
+
+<Note>
+Variables set this way are visible in the configuration file. Use secrets for sensitive values.
+</Note>
+
+## Clear vs Secret Variables
+
+When using secrets, organize variables under `clear` and `secret` keys:
+
+```yaml
+env:
+  clear:
+    DATABASE_HOST: mysql-db1
+    DATABASE_PORT: 3306
+    RAILS_ENV: production
+  secret:
+    - DATABASE_PASSWORD
+    - RAILS_MASTER_KEY
+    - SECRET_KEY_BASE
+```
+
+<ParamField path="env.clear" type="object">
+  Non-sensitive environment variables visible in the configuration.
+</ParamField>
+
+<ParamField path="env.secret" type="array">
+  Secret keys to load from `.kamal/secrets` files.
+</ParamField>
+
+## Secrets Files
+
+Kamal uses dotenv to load secrets from:
+
+1. `.kamal/secrets-common` - Shared across all destinations
+2. `.kamal/secrets` - Default destination
+3. `.kamal/secrets.<destination>` - Destination-specific (when using `-d` flag)
+
+### Basic Secrets File
+
+```shell
+# .kamal/secrets
+DATABASE_PASSWORD=super_secret_password
+RAILS_MASTER_KEY=abc123def456
+SECRET_KEY_BASE=xyz789
+```
+
+### Variable Substitution
+
+```shell
+# .kamal/secrets
+KAMAL_REGISTRY_PASSWORD=$GITHUB_TOKEN
+RAILS_MASTER_KEY=$(cat config/master.key)
+DB_PASSWORD=${PRODUCTION_DB_PASSWORD}
+```
+
+### Command Substitution
+
+```shell
+# .kamal/secrets
+AWS_SECRET=$(aws secretsmanager get-secret-value --secret-id prod/db --query SecretString --output text)
+CURRENT_TIMESTAMP=$(date +%s)
+```
+
+### Destination-Specific Secrets
+
+<CodeGroup>
+```shell .kamal/secrets-common
+# Shared across all destinations
+KAMAL_REGISTRY_PASSWORD=ghp_common_token
+GITHUB_TOKEN=ghp_shared_token
+```
+
+```shell .kamal/secrets.production
+# Production only
+DATABASE_PASSWORD=production_db_password
+RAILS_MASTER_KEY=production_master_key
+REDIS_URL=redis://prod-redis:6379
+```
+
+```shell .kamal/secrets.staging
+# Staging only
+DATABASE_PASSWORD=staging_db_password
+RAILS_MASTER_KEY=staging_master_key
+REDIS_URL=redis://staging-redis:6379
+```
+</CodeGroup>
+
+<Warning>
+Always add `.kamal/secrets*` to your `.gitignore` to avoid committing credentials.
+</Warning>
+
+## Aliased Secrets
+
+Map environment variable names to different secret keys:
+
+```yaml
+env:
+  secret:
+    - DB_PASSWORD:MAIN_DB_PASSWORD
+    - REDIS_PASSWORD:CACHE_REDIS_PASSWORD
+```
+
+In `.kamal/secrets`:
+```shell
+MAIN_DB_PASSWORD=main_db_secret
+CACHE_REDIS_PASSWORD=redis_secret
+```
+
+This sets:
+- `DB_PASSWORD=main_db_secret`
+- `REDIS_PASSWORD=redis_secret`
+
+### Use Case: Different Databases
+
+```yaml
+env:
+  secret:
+    - DB_PASSWORD:MAIN_DB_PASSWORD
+
+accessories:
+  main_db:
+    image: postgres:15
+    env:
+      secret:
+        - POSTGRES_PASSWORD:MAIN_DB_PASSWORD
+  
+  analytics_db:
+    image: postgres:15
+    env:
+      secret:
+        - POSTGRES_PASSWORD:ANALYTICS_DB_PASSWORD
+```
+
+## Tagged Hosts
+
+Apply different environment variables to tagged servers:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1: primary
+    - 192.168.0.2: replica
+    - 192.168.0.3: [replica, monitoring]
+
+env:
+  clear:
+    RAILS_ENV: production
+  secret:
+    - RAILS_MASTER_KEY
+  
+  tags:
+    primary:
+      clear:
+        READ_ONLY_MODE: false
+        CACHE_WRITES: true
+    
+    replica:
+      clear:
+        READ_ONLY_MODE: true
+        CACHE_WRITES: false
+    
+    monitoring:
+      clear:
+        MONITORING_ENABLED: true
+      secret:
+        - DATADOG_API_KEY
+```
+
+<Note>
+Tagged environments are merged with base environment. Tags override base values.
+</Note>
+
+### Tag Configuration
+
+<ParamField path="env.tags.<tag_name>" type="object">
+  Environment variables for servers with this tag.
+</ParamField>
+
+```yaml
+env:
+  tags:
+    experiments:
+      clear:
+        FEATURE_FLAG_EXPERIMENTS: true
+        LOG_LEVEL: debug
+      secret:
+        - EXPERIMENTS_API_KEY
+```
+
+## Role-Specific Environment
+
+Different roles can have different environment variables:
+
+```yaml
+env:
+  clear:
+    RAILS_ENV: production
+  secret:
+    - RAILS_MASTER_KEY
+
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    env:
+      clear:
+        ROLE: web
+        WEB_CONCURRENCY: 4
+  
+  workers:
+    hosts:
+      - 192.168.0.2
+    cmd: bundle exec sidekiq
+    env:
+      clear:
+        ROLE: worker
+        SIDEKIQ_CONCURRENCY: 20
+      secret:
+        - SIDEKIQ_REDIS_URL
+```
+
+## Accessory Environment
+
+Each accessory can have its own environment:
+
+```yaml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    env:
+      clear:
+        MYSQL_ROOT_HOST: '%'
+        MYSQL_DATABASE: myapp_production
+      secret:
+        - MYSQL_ROOT_PASSWORD
+  
+  redis:
+    image: redis:7
+    host: 192.168.0.11
+    env:
+      clear:
+        REDIS_MAXMEMORY: 2gb
+        REDIS_MAXMEMORY_POLICY: allkeys-lru
+```
+
+## Secret Helpers
+
+Kamal provides helpers for common password managers:
+
+### 1Password
+
+```shell
+# .kamal/secrets
+SECRETS=$(kamal secrets fetch --adapter 1password --account my-account --from "Kamal/production")
+
+DATABASE_PASSWORD=$(kamal secrets extract DATABASE_PASSWORD $SECRETS)
+RAILS_MASTER_KEY=$(kamal secrets extract RAILS_MASTER_KEY $SECRETS)
+```
+
+### Fetch from External Sources
+
+```shell
+# .kamal/secrets
+SECRETS=$(kamal secrets fetch ...)
+
+REGISTRY_PASSWORD=$(kamal secrets extract REGISTRY_PASSWORD $SECRETS)
+DB_PASSWORD=$(kamal secrets extract DB_PASSWORD $SECRETS)
+API_KEY=$(kamal secrets extract API_KEY $SECRETS)
+```
+
+See [Secrets Commands](/commands/secrets) for more details.
+
+## Environment Variable Precedence
+
+Environment variables are merged in this order (later overrides earlier):
+
+1. Root `env.clear`
+2. Root `env.secret`
+3. Role-specific `env.clear`
+4. Role-specific `env.secret`
+5. Tag-specific `env.clear` (for each tag)
+6. Tag-specific `env.secret` (for each tag)
+
+## Complete Examples
+
+<Accordion title="Rails Application">
+```yaml
+env:
+  clear:
+    RAILS_ENV: production
+    RAILS_SERVE_STATIC_FILES: true
+    RAILS_LOG_TO_STDOUT: true
+  secret:
+    - RAILS_MASTER_KEY
+    - SECRET_KEY_BASE
+    - DATABASE_URL
+```
+</Accordion>
+
+<Accordion title="Multi-Region with Tags">
+```yaml
+servers:
+  web:
+    hosts:
+      - us-east.example.com: us_east
+      - us-west.example.com: us_west
+      - eu-west.example.com: eu_west
+
+env:
+  clear:
+    RAILS_ENV: production
+  secret:
+    - RAILS_MASTER_KEY
+  
+  tags:
+    us_east:
+      clear:
+        AWS_REGION: us-east-1
+        CDN_URL: https://cdn-use1.example.com
+      secret:
+        - US_EAST_DATABASE_URL
+    
+    us_west:
+      clear:
+        AWS_REGION: us-west-1
+        CDN_URL: https://cdn-usw1.example.com
+      secret:
+        - US_WEST_DATABASE_URL
+    
+    eu_west:
+      clear:
+        AWS_REGION: eu-west-1
+        CDN_URL: https://cdn-euw1.example.com
+      secret:
+        - EU_WEST_DATABASE_URL
+```
+</Accordion>
+
+<Accordion title="Web + Workers with Different Configs">
+```yaml
+env:
+  clear:
+    RAILS_ENV: production
+  secret:
+    - RAILS_MASTER_KEY
+    - DATABASE_URL
+
+servers:
+  web:
+    hosts:
+      - web-1.example.com
+    env:
+      clear:
+        WEB_CONCURRENCY: 4
+        RAILS_MAX_THREADS: 5
+  
+  workers:
+    hosts:
+      - worker-1.example.com
+    cmd: bundle exec sidekiq
+    env:
+      clear:
+        SIDEKIQ_CONCURRENCY: 25
+      secret:
+        - REDIS_URL
+        - SIDEKIQ_PRO_LICENSE
+```
+</Accordion>
+
+<Accordion title="Complete Production Setup">
+```yaml
+env:
+  clear:
+    RAILS_ENV: production
+    RAILS_SERVE_STATIC_FILES: true
+    RAILS_LOG_TO_STDOUT: true
+    NODE_ENV: production
+  secret:
+    - RAILS_MASTER_KEY
+    - SECRET_KEY_BASE
+    - DATABASE_URL
+    - REDIS_URL
+
+servers:
+  web:
+    hosts:
+      - web-1.example.com: primary
+      - web-2.example.com: replica
+    env:
+      clear:
+        WEB_CONCURRENCY: 4
+  
+  workers:
+    hosts:
+      - worker-1.example.com
+    cmd: bundle exec sidekiq
+    env:
+      clear:
+        SIDEKIQ_CONCURRENCY: 25
+      secret:
+        - SIDEKIQ_REDIS_URL
+
+accessories:
+  postgres:
+    image: postgres:15
+    host: db.example.com
+    env:
+      clear:
+        POSTGRES_DB: myapp_production
+      secret:
+        - POSTGRES_PASSWORD
+  
+  redis:
+    image: redis:7
+    host: cache.example.com
+    env:
+      clear:
+        MAXMEMORY: 2gb
+```
+</Accordion>
+
+## Viewing Environment Variables
+
+```bash
+# Print environment for a role
+kamal app env -r web
+
+# Print environment for specific host
+kamal app env -h 192.168.0.1
+```
+
+## Best Practices
+
+<Note>
+**Never commit secrets**: Always use `.kamal/secrets` files and add them to `.gitignore`.
+</Note>
+
+<Note>
+**Use secrets-common**: Store shared secrets in `.kamal/secrets-common` and environment-specific secrets in destination files.
+</Note>
+
+<Note>
+**Rotate credentials**: Use aliased secrets to rotate credentials without changing environment variable names.
+</Note>
+
+<Warning>
+**Avoid clear text**: Don't put sensitive values in `env.clear`. They'll be visible in configuration and logs.
+</Warning>
+
+## Related Configuration
+
+- [Servers](/configuration/servers) - Tag servers for environment targeting
+- [Accessories](/configuration/accessories) - Configure accessory environment variables
+- [Builder](/configuration/builder) - Use build secrets for build-time variables

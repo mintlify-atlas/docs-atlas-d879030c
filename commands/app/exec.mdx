@@ -1,0 +1,288 @@
+---
+title: kamal app exec
+description: Execute custom commands within app containers
+---
+
+## Overview
+
+The `kamal app exec` command allows you to execute arbitrary commands inside your app containers. This is useful for running one-off tasks, accessing the Rails console, running database migrations, or debugging.
+
+## Usage
+
+```bash
+kamal app exec [OPTIONS] COMMAND...
+```
+
+## Options
+
+<ParamField path="--interactive" type="boolean" default="false">
+  Execute command over SSH for an interactive shell. Required for interactive commands like Rails console or bash.
+  
+  **Alias:** `-i`
+  
+  ```bash
+  kamal app exec -i bin/rails console
+  kamal app exec -i bash
+  ```
+</ParamField>
+
+<ParamField path="--reuse" type="boolean" default="false">
+  Reuse the currently running container instead of starting a new one. Faster but uses the existing container's state.
+  
+  ```bash
+  kamal app exec --reuse bin/rails db:migrate
+  ```
+</ParamField>
+
+<ParamField path="--env" type="hash">
+  Set environment variables for the command. Pass as key=value pairs.
+  
+  **Alias:** `-e`
+  
+  ```bash
+  kamal app exec -e RAILS_ENV=production -e DEBUG=true bin/rails runner 'puts ENV["DEBUG"]'
+  ```
+</ParamField>
+
+<ParamField path="--detach" type="boolean" default="false">
+  Execute command in a detached container (runs in background). Cannot be combined with `--interactive` or `--reuse`.
+  
+  ```bash
+  kamal app exec --detach bin/rails runner 'SomeJob.perform_later'
+  ```
+</ParamField>
+
+<ParamField path="--version" type="string">
+  Run command against a specific app version. If not specified, uses the latest version.
+  
+  ```bash
+  kamal app exec --version v1.2.3 bin/rails runner 'puts Rails.version'
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Run command on specific hosts (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app exec --hosts web1.example.com bin/rails runner 'puts "Hello"'
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Run command on specific roles (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app exec --roles web bin/rails console
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal logging output
+  
+  ```bash
+  kamal app exec --quiet bin/rails runner 'puts User.count'
+  ```
+</ParamField>
+
+## Execution Modes
+
+The command behaves differently based on the flags you use:
+
+<Tabs>
+  <Tab title="Default (New Container)">
+    Creates a new container with the latest image and runs the command.
+    
+    ```bash
+    kamal app exec bin/rails db:migrate
+    ```
+    
+    **Best for:** One-off tasks, migrations, scripts
+    
+    **Pros:** Clean environment, uses specified version
+    
+    **Cons:** Slower (container startup time)
+  </Tab>
+  
+  <Tab title="Interactive">
+    Runs command over SSH in a new container for interactive use.
+    
+    ```bash
+    kamal app exec -i bin/rails console
+    kamal app exec -i bash
+    ```
+    
+    **Best for:** Rails console, bash shells, interactive debugging
+    
+    **Pros:** Full interactivity, terminal control
+    
+    **Cons:** Only runs on primary host
+  </Tab>
+  
+  <Tab title="Reuse Container">
+    Runs command in the currently running container.
+    
+    ```bash
+    kamal app exec --reuse bin/rails runner 'User.count'
+    ```
+    
+    **Best for:** Quick checks, inspecting running state
+    
+    **Pros:** Faster, sees current container state
+    
+    **Cons:** Uses running container's environment
+  </Tab>
+  
+  <Tab title="Interactive + Reuse">
+    Interactive session in the existing running container.
+    
+    ```bash
+    kamal app exec -i --reuse bash
+    ```
+    
+    **Best for:** Debugging running container, inspecting live state
+    
+    **Pros:** Full access to running container
+    
+    **Cons:** Only runs on primary host
+  </Tab>
+  
+  <Tab title="Detached">
+    Runs command in background, returns immediately.
+    
+    ```bash
+    kamal app exec --detach bin/long-running-task
+    ```
+    
+    **Best for:** Long-running tasks, background jobs
+    
+    **Pros:** Non-blocking, runs in background
+    
+    **Cons:** No output, can't interact
+  </Tab>
+</Tabs>
+
+## Examples
+
+<CodeGroup>
+
+```bash Rails console
+# Interactive Rails console on primary host
+kamal app exec -i bin/rails console
+```
+
+```bash Database migration
+# Run migrations on all hosts
+kamal app exec bin/rails db:migrate
+```
+
+```bash One-off script
+# Execute a Rails runner script
+kamal app exec bin/rails runner 'User.where("created_at < ?", 1.year.ago).destroy_all'
+```
+
+```bash Bash shell
+# Interactive bash shell
+kamal app exec -i bash
+```
+
+```bash Check application state
+# Quick check using existing container
+kamal app exec --reuse bin/rails runner 'puts User.count'
+```
+
+```bash With environment variables
+# Set environment variables
+kamal app exec -e BATCH_SIZE=1000 -e DRY_RUN=false bin/data-cleanup
+```
+
+```bash Specific version
+# Run against specific version
+kamal app exec --version v1.2.3 bin/rails runner 'puts Rails.application.config.version'
+```
+
+```bash Background task
+# Run long task in background
+kamal app exec --detach bin/rails runner 'ExpensiveReport.generate'
+```
+
+```bash Specific role
+# Run only on worker nodes
+kamal app exec --roles worker bin/rails runner 'Worker.status'
+```
+
+</CodeGroup>
+
+## Common Tasks
+
+### Rails Console
+
+Access the Rails console for debugging or data inspection:
+
+```bash
+kamal app exec -i bin/rails console
+```
+
+### Database Migrations
+
+Run database migrations after deploying new code:
+
+```bash
+kamal app exec bin/rails db:migrate
+```
+
+### Rake Tasks
+
+Execute Rake tasks:
+
+```bash
+kamal app exec bin/rails some:rake:task
+```
+
+### System Shell
+
+Access a bash shell for system-level debugging:
+
+```bash
+kamal app exec -i bash
+```
+
+### Data Cleanup
+
+Run data cleanup scripts:
+
+```bash
+kamal app exec bin/rails runner 'CleanupService.run'
+```
+
+## Important Notes
+
+<Note>
+  **Interactive mode** (`-i`) only runs on the primary host and requires SSH access. The command is executed over SSH rather than through Docker exec.
+</Note>
+
+<Note>
+  **Detached mode** (`--detach`) is incompatible with `--interactive` and `--reuse`. You'll get an error if you try to combine them.
+</Note>
+
+<Tip>
+  Use `--reuse` for quick checks and debugging, but use the default mode for important tasks like migrations to ensure they run in a clean environment.
+</Tip>
+
+<Tip>
+  When running commands across multiple hosts, the output is labeled by host. Use `--quiet` to suppress the host labels if you need cleaner output.
+</Tip>
+
+## Error Handling
+
+The command will fail if:
+
+- No command is provided: `kamal app exec` without arguments will error
+- Incompatible options are combined: `--detach` with `--interactive` or `--reuse`
+- The specified version doesn't exist on the hosts
+- The container fails to start
+
+## Related Commands
+
+- [`kamal app logs`](/commands/app/logs) - View application logs
+- [`kamal app containers`](/commands/app/containers) - List running containers
+- [`kamal app boot`](/commands/app/boot) - Boot the application

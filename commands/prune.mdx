@@ -1,0 +1,494 @@
+---
+title: kamal prune
+description: Clean up unused Docker images and stopped containers
+---
+
+The `kamal prune` command removes unused Docker images and stopped containers from your servers, freeing up disk space.
+
+## Overview
+
+Over time, deployments accumulate old images and stopped containers. Pruning removes these resources while keeping recent versions for quick rollbacks.
+
+<Info>
+  Pruning is automatically performed at the end of `kamal deploy` and `kamal setup` commands.
+</Info>
+
+## Commands
+
+The prune command has three subcommands:
+
+- `kamal prune all` - Prune both images and containers
+- `kamal prune images` - Prune only unused images
+- `kamal prune containers` - Prune only stopped containers
+
+## kamal prune all
+
+Remove both unused images and stopped containers:
+
+```bash
+kamal prune all
+```
+
+This runs both `prune images` and `prune containers` in sequence.
+
+### Implementation
+
+```ruby
+# From prune.rb:2-8
+def all
+  with_lock do
+    containers
+    images
+  end
+end
+```
+
+### Example Output
+
+```bash
+$ kamal prune all
+
+INFO [192.168.1.10] Pruned containers
+INFO [192.168.1.10] Removed 3 stopped containers
+
+INFO [192.168.1.10] Pruned images  
+INFO [192.168.1.10] Deleted 5 dangling images
+INFO [192.168.1.10] Deleted 2 old tagged images
+
+INFO [192.168.1.11] Pruned containers
+INFO [192.168.1.11] Removed 3 stopped containers
+
+INFO [192.168.1.11] Pruned images
+INFO [192.168.1.11] Deleted 5 dangling images  
+INFO [192.168.1.11] Deleted 2 old tagged images
+```
+
+## kamal prune images
+
+Remove unused Docker images:
+
+```bash
+kamal prune images
+```
+
+### What Gets Removed
+
+<Steps>
+  <Step title="Dangling Images">
+    Untagged images that are no longer referenced:
+    
+    ```ruby
+    # From prune.rb:15
+    execute *KAMAL.prune.dangling_images
+    ```
+    
+    These are intermediate build layers and images without tags.
+  </Step>
+  
+  <Step title="Old Tagged Images">
+    Tagged images for your application, except recent versions:
+    
+    ```ruby
+    # From prune.rb:16  
+    execute *KAMAL.prune.tagged_images
+    ```
+    
+    Keeps the latest images for quick rollbacks.
+  </Step>
+</Steps>
+
+### Example Output
+
+```bash
+$ kamal prune images
+
+INFO [192.168.1.10] Pruned images
+INFO [192.168.1.10] Deleted Images:
+INFO [192.168.1.10]   myuser/myapp:20240308-120000 (823MB)
+INFO [192.168.1.10]   myuser/myapp:20240309-140000 (825MB)
+INFO [192.168.1.10]   <none>:<none> (45MB)
+INFO [192.168.1.10] Total space reclaimed: 1.7GB
+```
+
+### Implementation
+
+```ruby
+# From prune.rb:10-18
+def images
+  with_lock do
+    on(KAMAL.hosts) do
+      execute *KAMAL.auditor.record("Pruned images"), verbosity: :debug
+      execute *KAMAL.prune.dangling_images
+      execute *KAMAL.prune.tagged_images
+    end
+  end
+end
+```
+
+## kamal prune containers
+
+Remove stopped containers, keeping recent ones:
+
+```bash
+kamal prune containers
+```
+
+### Options
+
+<ParamField path="--retain" type="number" default="5">
+  Number of stopped containers to keep for each role
+  
+  ```bash
+  kamal prune containers --retain 10
+  ```
+</ParamField>
+
+### How It Works
+
+Pruning keeps the N most recent stopped containers for potential rollback:
+
+```ruby
+# From prune.rb:21-33
+def containers
+  retain = options.fetch(:retain, KAMAL.config.retain_containers)
+  raise "retain must be at least 1" if retain < 1
+  
+  with_lock do
+    on(KAMAL.hosts) do
+      execute *KAMAL.auditor.record("Pruned containers"), verbosity: :debug
+      execute *KAMAL.prune.app_containers(retain: retain)
+    end
+  end
+end
+```
+
+### Configuration
+
+Set default retention in `config/deploy.yml`:
+
+```yaml config/deploy.yml
+# Keep 3 old containers per role (default is 5)
+retain_containers: 3
+```
+
+### Example Output
+
+```bash
+$ kamal prune containers --retain 3
+
+INFO [192.168.1.10] Pruned containers
+INFO [192.168.1.10] Keeping 3 most recent containers
+INFO [192.168.1.10] Removed:
+INFO [192.168.1.10]   my-app-20240308-120000
+INFO [192.168.1.10]   my-app-20240309-083000
+INFO [192.168.1.10] Kept:
+INFO [192.168.1.10]   my-app-20240310-150000
+INFO [192.168.1.10]   my-app-20240310-170000
+INFO [192.168.1.10]   my-app-20240311-103000 (running)
+```
+
+## What Gets Kept
+
+### Containers
+
+<ParamField body="Running Containers" type="always kept">
+  Currently running containers are never removed
+</ParamField>
+
+<ParamField body="Recent Stopped" type="configurable">
+  The N most recent stopped containers (default: 5) are kept for rollbacks
+</ParamField>
+
+<ParamField body="Other Services" type="always kept">
+  Containers from other services or accessories are never touched
+</ParamField>
+
+### Images
+
+<ParamField body="Current Version" type="always kept">
+  Images for currently running containers
+</ParamField>
+
+<ParamField body="Recent Versions" type="always kept">
+  Images matching retained stopped containers
+</ParamField>
+
+<ParamField body="Other Images" type="always kept">
+  Images from registries other than your configured one
+</ParamField>
+
+## Automatic Pruning
+
+Pruning automatically runs during deployment:
+
+```ruby
+# From main.rb:46-47
+say "Prune old containers and images...", :magenta
+invoke "kamal:cli:prune:all", [], invoke_options
+```
+
+This happens at the end of:
+- `kamal setup`
+- `kamal deploy`
+
+To skip automatic pruning, use `kamal redeploy` instead of `kamal deploy`.
+
+## Disk Space Management
+
+### Check Disk Usage
+
+Before pruning, check available space:
+
+```bash
+# Check disk usage on all servers
+kamal app exec "df -h /var/lib/docker"
+
+# Or SSH directly
+ssh deploy@server "df -h"
+```
+
+### Aggressive Pruning
+
+For servers running low on space:
+
+```bash
+# Keep only 1 old container
+kamal prune containers --retain 1
+
+# Remove images
+kamal prune images
+
+# Or do both
+kamal prune all
+```
+
+### Manual Docker Cleanup
+
+For more aggressive cleanup:
+
+```bash
+# SSH into server
+ssh deploy@server
+
+# Remove all stopped containers
+docker container prune -f
+
+# Remove all unused images (not just dangling)
+docker image prune -a -f
+
+# Remove all unused volumes
+docker volume prune -f
+
+# Remove all unused networks
+docker network prune -f
+```
+
+<Warning>
+  Manual Docker pruning is more aggressive and may remove resources Kamal would keep. Use with caution.
+</Warning>
+
+## Monitoring Disk Usage
+
+Set up alerts for low disk space:
+
+```bash
+# Example monitoring script
+#!/bin/bash
+USED=$(df -h /var/lib/docker | tail -1 | awk '{print $5}' | sed 's/%//')
+
+if [ $USED -gt 80 ]; then
+  echo "Docker disk usage is at ${USED}%"
+  kamal prune all
+fi
+```
+
+Run this in a cron job:
+
+```bash
+# Run daily at 2am
+0 2 * * * /home/deploy/prune-if-needed.sh
+```
+
+## Prune Strategies
+
+### Conservative (Default)
+
+Keep more versions for safety:
+
+```yaml config/deploy.yml
+retain_containers: 10
+```
+
+Good for:
+- Frequent deployments
+- Servers with ample disk space
+- When rollbacks are common
+
+### Aggressive
+
+Keep fewer versions to save space:
+
+```yaml config/deploy.yml
+retain_containers: 2
+```
+
+Good for:
+- Servers with limited disk space
+- Stable deployments (rare rollbacks)
+- Cost-sensitive environments
+
+### Scheduled
+
+Prune on a schedule instead of after each deploy:
+
+```bash
+# Add to cron
+0 3 * * * cd /app && kamal prune all
+```
+
+Good for:
+- High-frequency deployments
+- Separating cleanup from deployment
+- Consistent maintenance windows
+
+## Troubleshooting
+
+### Disk Space Still Low
+
+If pruning doesn't free enough space:
+
+```bash
+# Check what's using space
+ssh deploy@server "docker system df"
+
+# Output shows:
+# Images: 15GB
+# Containers: 2GB  
+# Volumes: 8GB
+# Build Cache: 3GB
+```
+
+**Solutions**:
+
+1. Prune more aggressively:
+   ```bash
+   kamal prune containers --retain 1
+   ```
+
+2. Clean build cache:
+   ```bash
+   ssh deploy@server "docker builder prune -f"
+   ```
+
+3. Remove unused volumes:
+   ```bash
+   ssh deploy@server "docker volume prune -f"
+   ```
+
+### Cannot Remove Container
+
+```bash
+Error: container is running
+```
+
+Prune only removes stopped containers. Running containers are protected.
+
+**Solution**: Stop the container first (if intended):
+
+```bash
+kamal app stop
+kamal prune containers
+```
+
+### Permission Denied
+
+```bash
+Permission denied while removing container
+```
+
+**Solution**: Ensure deployment user is in docker group:
+
+```bash
+ssh deploy@server "groups"
+ssh deploy@server "sudo usermod -aG docker deploy"
+```
+
+### Prune Takes Too Long
+
+For servers with many images:
+
+```bash
+# Prune images and containers separately
+kamal prune images
+# Wait for completion
+kamal prune containers
+```
+
+## Safety Considerations
+
+<Steps>
+  <Step title="Locked During Pruning">
+    Pruning acquires the deploy lock to prevent conflicts:
+    
+    ```ruby
+    with_lock do
+      # Prune operations
+    end
+    ```
+  </Step>
+  
+  <Step title="Never Removes Running">
+    Running containers and their images are never removed.
+  </Step>
+  
+  <Step title="Keeps Recent Versions">
+    Recent stopped containers are retained for rollback capability.
+  </Step>
+  
+  <Step title="Service-Specific">
+    Only prunes resources for the configured service, not other applications.
+  </Step>
+</Steps>
+
+## Best Practices
+
+### Regular Pruning
+
+```bash
+# Let automatic pruning handle it
+kamal deploy  # Prunes automatically
+
+# Or schedule weekly manual pruning
+0 2 * * 0 cd /app && kamal prune all
+```
+
+### Monitor First, Prune Second
+
+```bash
+# Check what will be removed
+ssh deploy@server "docker images | grep myapp"
+ssh deploy@server "docker ps -a | grep myapp"
+
+# Then prune
+kamal prune all
+```
+
+### Adjust Retention Based on Needs
+
+```yaml config/deploy.yml
+# High-frequency deployments
+retain_containers: 3
+
+# Stable, infrequent deployments  
+retain_containers: 10
+```
+
+## Related Commands
+
+- [`kamal deploy`](/deployment/deploy) - Deploy (includes automatic pruning)
+- [`kamal app containers`](/commands/app/containers) - List all containers
+- [`kamal details`](/commands/details) - View deployment details
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/prune.rb:1-35`

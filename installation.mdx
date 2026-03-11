@@ -1,0 +1,311 @@
+---
+title: Installation
+description: Install Kamal and prepare your environment for deploying applications
+---
+
+# Installation
+
+Kamal is distributed as a Ruby gem and requires Docker on your deployment servers. This guide will walk you through installing Kamal on your local machine and preparing your servers.
+
+## Prerequisites
+
+Before installing Kamal, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Ruby" icon="gem">
+    Ruby 3.0 or newer installed on your local machine
+  </Card>
+  <Card title="Docker" icon="docker">
+    Docker installed locally for building images (optional: Kamal can install Docker on servers)
+  </Card>
+  <Card title="SSH Access" icon="key">
+    SSH access to your deployment servers
+  </Card>
+  <Card title="Git" icon="git-alt">
+    Git for version management (recommended)
+  </Card>
+</CardGroup>
+
+## Installing Kamal
+
+### Option 1: Install as a Gem (Recommended)
+
+The simplest way to install Kamal is using RubyGems:
+
+```bash
+gem install kamal
+```
+
+Verify the installation:
+
+```bash
+kamal version
+```
+
+This should output the current version (e.g., `2.10.1`).
+
+<Note>
+  Installing Kamal globally makes it available from anywhere on your system. This is the recommended approach for most users.
+</Note>
+
+### Option 2: Add to Gemfile (For Ruby Projects)
+
+If you're deploying a Ruby application, you can add Kamal to your `Gemfile`:
+
+```ruby Gemfile
+gem 'kamal'
+```
+
+Then install:
+
+```bash
+bundle install
+```
+
+Create a binstub for convenient access:
+
+```bash
+bundle binstubs kamal
+```
+
+Now you can run Kamal using `bin/kamal` instead of `kamal`.
+
+<Tip>
+  Using the binstub ensures everyone on your team uses the same version of Kamal specified in your `Gemfile.lock`.
+</Tip>
+
+### Option 3: Auto-bundle During Init
+
+Kamal can automatically add itself to your Gemfile during initialization:
+
+```bash
+kamal init --bundle
+```
+
+This will:
+- Add Kamal to your `Gemfile`
+- Run `bundle install`
+- Create a binstub at `bin/kamal`
+
+## Docker Setup
+
+### Local Docker Installation
+
+You'll need Docker installed locally to build container images. Download and install Docker Desktop for your platform:
+
+<CardGroup cols={3}>
+  <Card title="macOS" icon="apple" href="https://docs.docker.com/desktop/install/mac-install/">
+    Docker Desktop for Mac
+  </Card>
+  <Card title="Windows" icon="windows" href="https://docs.docker.com/desktop/install/windows-install/">
+    Docker Desktop for Windows
+  </Card>
+  <Card title="Linux" icon="linux" href="https://docs.docker.com/engine/install/">
+    Docker Engine for Linux
+  </Card>
+</CardGroup>
+
+Verify Docker is installed:
+
+```bash
+docker --version
+docker buildx version
+```
+
+<Note>
+  Kamal uses Docker Buildx for building multi-platform images. It's included with Docker Desktop by default.
+</Note>
+
+### Server Docker Installation
+
+Kamal can automatically install Docker on your servers during the `kamal setup` process. However, you can also install Docker manually.
+
+#### Automatic Installation (Recommended)
+
+When you run `kamal setup`, Kamal will:
+1. Check if Docker is installed on each server
+2. If missing and the user has root access, automatically install Docker
+3. Configure Docker group permissions
+4. Refresh the session to apply group changes
+
+<Warning>
+  Automatic installation requires:
+  - Root access (sudo privileges)
+  - Either `wget` or `curl` available on the server
+  - An internet connection to download Docker
+</Warning>
+
+#### Manual Installation
+
+If you prefer to install Docker manually or automatic installation fails:
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in for group changes to take effect
+```
+
+See the [official Docker installation guide](https://docs.docker.com/engine/install/) for other platforms.
+
+## SSH Configuration
+
+Kamal connects to your servers via SSH. Ensure you have:
+
+### 1. SSH Key Setup
+
+Generate an SSH key if you don't have one:
+
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+Add your public key to your servers:
+
+```bash
+ssh-copy-id user@your-server-ip
+```
+
+### 2. SSH Agent (Optional)
+
+For convenience, add your key to the SSH agent:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+### 3. Test SSH Connection
+
+Verify you can connect to your servers:
+
+```bash
+ssh user@your-server-ip
+```
+
+<Tip>
+  Configure SSH keys and agents to avoid password prompts during deployment. Kamal supports SSH jump hosts and proxy commands for complex network setups.
+</Tip>
+
+## Docker Registry Access
+
+Kamal requires a Docker registry to store your application images. You can use:
+
+- **Docker Hub** (default, free tier available)
+- **GitHub Container Registry** (ghcr.io)
+- **GitLab Container Registry**
+- **DigitalOcean Container Registry**
+- **AWS ECR**
+- **Self-hosted registry**
+
+### Docker Hub Example
+
+Create an account at [hub.docker.com](https://hub.docker.com) and note your username.
+
+Login locally to verify access:
+
+```bash
+docker login
+```
+
+<Warning>
+  Never commit Docker registry passwords to git. Kamal uses `.kamal/secrets` to securely manage credentials - this file should be git-ignored.
+</Warning>
+
+## System Requirements
+
+### Local Machine
+- **Ruby**: 3.0 or newer
+- **Docker**: Latest stable version recommended
+- **Disk Space**: Sufficient for building Docker images
+- **Network**: Internet access to push/pull images
+
+### Deployment Servers
+- **OS**: Any Linux distribution supported by Docker
+- **RAM**: Minimum 1GB (2GB+ recommended)
+- **Disk Space**: Sufficient for Docker images and container storage
+- **Network**: Internet access to pull images
+- **Ports**: 80 (HTTP), 443 (HTTPS) open for web traffic
+
+## Verifying Installation
+
+Run these commands to verify everything is set up correctly:
+
+<Steps>
+  <Step title="Check Kamal Version">
+    ```bash
+    kamal version
+    ```
+    Should output: `2.10.1` (or your installed version)
+  </Step>
+  
+  <Step title="Check Docker">
+    ```bash
+    docker --version
+    docker buildx version
+    ```
+    Both commands should succeed
+  </Step>
+  
+  <Step title="Check SSH Access">
+    ```bash
+    ssh user@your-server-ip "echo 'Connection successful'"
+    ```
+    Should print "Connection successful"
+  </Step>
+  
+  <Step title="Check Docker Registry Login">
+    ```bash
+    docker login
+    ```
+    Should succeed with your credentials
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### "Command not found: kamal"
+
+If `kamal` is not found after installation:
+
+```bash
+# Check if gem bin directory is in PATH
+echo $PATH | grep -q "$(gem environment gemdir)/bin" || echo "Add $(gem environment gemdir)/bin to PATH"
+
+# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export PATH="$(gem environment gemdir)/bin:$PATH"
+```
+
+### Docker Permission Denied
+
+If you get permission errors with Docker:
+
+```bash
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in, or run:
+newgrp docker
+```
+
+### SSH Connection Issues
+
+```bash
+# Test SSH with verbose output
+ssh -v user@your-server-ip
+
+# Check SSH agent
+ssh-add -l
+```
+
+## Next Steps
+
+Now that Kamal is installed, you're ready to deploy your first application!
+
+<Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+  Follow our quick start guide to initialize Kamal and deploy your first application
+</Card>

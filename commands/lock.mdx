@@ -1,0 +1,469 @@
+---
+title: kamal lock
+description: Manage the deploy lock to prevent concurrent deployments
+---
+
+The `kamal lock` command manages a deployment lock that prevents multiple simultaneous deployments to the same servers.
+
+## Overview
+
+The deploy lock ensures only one deployment can run at a time, preventing race conditions and conflicts when multiple users or CI systems attempt to deploy simultaneously.
+
+<Info>
+  Most Kamal commands automatically acquire and release locks. Manual lock management is useful for maintenance windows or debugging.
+</Info>
+
+## Commands
+
+The lock command has three subcommands:
+
+- `kamal lock status` - Check if a lock exists and who owns it
+- `kamal lock acquire` - Manually acquire the deploy lock
+- `kamal lock release` - Release an existing lock
+
+## kamal lock status
+
+Check the current lock status:
+
+```bash
+kamal lock status
+```
+
+### Example Output
+
+<CodeGroup>
+```text Lock Exists
+Locked by: alice@laptop at 2024-03-11 14:30:15 UTC
+Message: Emergency maintenance - do not deploy
+Version: 20240311-143008
+```
+
+```text No Lock
+There is no deploy lock
+```
+</CodeGroup>
+
+### Implementation
+
+```ruby
+# From lock.rb:2-9
+def status
+  handle_missing_lock do
+    on(KAMAL.primary_host) do
+      puts capture_with_debug(*KAMAL.lock.status)
+    end
+  end
+end
+```
+
+The lock is stored on the primary host only.
+
+## kamal lock acquire
+
+Manually acquire the deploy lock:
+
+```bash
+kamal lock acquire --message "Maintenance window"
+```
+
+### Options
+
+<ParamField path="--message" type="string" required>
+  A description of why the lock was acquired. Required. Alias: `-m`
+  
+  ```bash
+  kamal lock acquire -m "Database migration in progress"
+  ```
+</ParamField>
+
+### Example Output
+
+```bash
+$ kamal lock acquire -m "Emergency maintenance"
+
+Acquired the deploy lock
+```
+
+### Implementation
+
+```ruby
+# From lock.rb:11-23
+def acquire
+  message = options[:message]
+  ensure_run_directory
+  
+  raise_if_locked do
+    on(KAMAL.primary_host) do
+      execute *KAMAL.lock.acquire(message, KAMAL.config.version), verbosity: :debug
+    end
+    say "Acquired the deploy lock"
+  end
+end
+```
+
+### When to Acquire Locks
+
+Manually acquire locks when:
+
+- Performing manual server maintenance
+- Running database migrations
+- Debugging deployment issues
+- Preventing automated deployments during incidents
+
+```bash
+# Start maintenance
+kamal lock acquire -m "Upgrading PostgreSQL"
+
+# Perform maintenance
+ssh deploy@server "pg_upgrade ..."
+
+# Release lock
+kamal lock release
+```
+
+## kamal lock release
+
+Release an existing deploy lock:
+
+```bash
+kamal lock release
+```
+
+### Example Output
+
+```bash
+$ kamal lock release
+
+Released the deploy lock
+```
+
+### Implementation
+
+```ruby
+# From lock.rb:25-33
+def release
+  handle_missing_lock do
+    on(KAMAL.primary_host) do
+      execute *KAMAL.lock.release, verbosity: :debug
+    end
+    say "Released the deploy lock"
+  end
+end
+```
+
+### When to Release Locks
+
+Release locks after:
+
+- Completing manual maintenance
+- Resolving deployment issues
+- Accidentally acquiring a lock
+- Taking over a stale lock
+
+```bash
+# Check if locked
+kamal lock status
+
+# Release if maintenance is done
+kamal lock release
+```
+
+## How Locks Work
+
+### Lock Storage
+
+Locks are stored on the primary host:
+
+```bash
+# Lock file location on server
+~/.kamal/locks/<service-name>
+```
+
+<Note>
+  Only the primary host maintains the lock. All deployments check this host before proceeding.
+</Note>
+
+### Lock Content
+
+The lock file contains:
+
+- **Who**: Username and hostname of lock owner
+- **When**: Timestamp of lock acquisition
+- **Why**: User-provided message
+- **Version**: Configuration version at time of lock
+
+### Automatic Lock Management
+
+Most commands automatically manage locks:
+
+<Steps>
+  <Step title="Acquire Lock">
+    Before starting deployment:
+    
+    ```ruby
+    with_lock do
+      # Deployment code here
+    end
+    ```
+  </Step>
+  
+  <Step title="Check Existing Lock">
+    If a lock exists, deployment fails with an error showing lock details.
+  </Step>
+  
+  <Step title="Perform Operations">
+    While locked, all deployment operations proceed normally.
+  </Step>
+  
+  <Step title="Release Lock">
+    After deployment (or on error), the lock is automatically released.
+  </Step>
+</Steps>
+
+## Commands That Use Locks
+
+These commands automatically acquire locks:
+
+- `kamal setup` - Initial server setup
+- `kamal deploy` - Application deployment
+- `kamal redeploy` - Quick redeploy
+- `kamal rollback` - Version rollback
+- `kamal remove` - Remove deployment
+- `kamal upgrade` - Upgrade Kamal version
+- `kamal server bootstrap` - Server bootstrapping
+- `kamal prune all` - Prune operations
+
+## Locked Deployment Error
+
+If you attempt to deploy while locked:
+
+```bash
+$ kamal deploy
+
+Error: Deploy lock is held
+Locked by: alice@laptop at 2024-03-11 14:30:15 UTC
+Message: Emergency maintenance - do not deploy
+Version: 20240311-143008
+
+To unlock: kamal lock release
+```
+
+### Handling Locked Deployments
+
+<Steps>
+  <Step title="Check Lock Status">
+    See who owns the lock:
+    
+    ```bash
+    kamal lock status
+    ```
+  </Step>
+  
+  <Step title="Contact Lock Owner">
+    Coordinate with the person who acquired the lock.
+  </Step>
+  
+  <Step title="Wait or Release">
+    Either wait for them to finish, or release the lock if appropriate:
+    
+    ```bash
+    kamal lock release
+    ```
+  </Step>
+  
+  <Step title="Retry Deployment">
+    Once unlocked, retry your deployment:
+    
+    ```bash
+    kamal deploy
+    ```
+  </Step>
+</Steps>
+
+## Lock Best Practices
+
+### Use Descriptive Messages
+
+```bash
+# Good messages
+kamal lock acquire -m "PostgreSQL upgrade - ETA 30min"
+kamal lock acquire -m "Investigating memory leak on web-01"
+kamal lock acquire -m "Coordinating with ops team - deploying at 2pm"
+
+# Poor messages  
+kamal lock acquire -m "maintenance"
+kamal lock acquire -m "locked"
+```
+
+### Keep Locks Short-Lived
+
+```bash
+# Acquire just before maintenance
+kamal lock acquire -m "Database backup"
+
+# Perform operation
+./backup-database.sh
+
+# Release immediately after
+kamal lock release
+```
+
+### Check Lock Before Acquiring
+
+```bash
+# Check if already locked
+if kamal lock status 2>&1 | grep -q "no deploy lock"; then
+  kamal lock acquire -m "Scheduled maintenance"
+else
+  echo "Deploy is already locked"
+  kamal lock status
+fi
+```
+
+### Document Lock Procedures
+
+For teams, document when to use locks:
+
+```markdown
+## When to Lock Deployments
+
+1. Database migrations requiring downtime
+2. Manual testing in production
+3. Emergency incident response
+4. Coordinated multi-step operations
+
+Always include:
+- Clear message explaining why
+- Expected duration
+- Your contact info in team chat
+```
+
+## Troubleshooting
+
+### Cannot Acquire Lock
+
+```bash
+Error: Deploy lock is held
+```
+
+**Solutions**:
+
+1. Check who owns the lock:
+   ```bash
+   kamal lock status
+   ```
+
+2. Contact the lock owner
+
+3. If lock is stale, release it:
+   ```bash
+   kamal lock release
+   kamal lock acquire -m "Your message"
+   ```
+
+### Lock File Missing
+
+```bash
+There is no deploy lock
+```
+
+This is normal if no lock exists. If you expected a lock:
+
+```bash
+# Check lock directory exists
+ssh deploy@primary-host "ls -la ~/.kamal/locks/"
+
+# Verify primary host is accessible
+kamal app details
+```
+
+### Stale Locks
+
+If a lock is held but the owner is unavailable:
+
+```bash
+# Check lock age
+kamal lock status
+
+# If stale (hours/days old), release it
+kamal lock release
+
+# Document in team chat
+"Released stale lock from alice@laptop (acquired 3 days ago)"
+```
+
+### Permission Issues
+
+```bash
+Permission denied when accessing lock file
+```
+
+**Solution**: Fix lock directory permissions:
+
+```bash
+ssh deploy@primary-host "chmod 755 ~/.kamal/locks"
+ssh deploy@primary-host "chmod 644 ~/.kamal/locks/*"
+```
+
+## CI/CD Integration
+
+Prevent CI deployments during maintenance:
+
+```yaml .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check deploy lock
+        run: |
+          if ! kamal lock status 2>&1 | grep -q "no deploy lock"; then
+            echo "Deployment is locked:"
+            kamal lock status
+            exit 1
+          fi
+      
+      - name: Deploy
+        run: kamal deploy
+```
+
+## Lock Storage Details
+
+### File Location
+
+```bash
+# On primary host
+~/.kamal/locks/<service-name>
+
+# Example
+~/.kamal/locks/my-app
+```
+
+### Lock File Format
+
+```
+alice@laptop|2024-03-11 14:30:15 UTC|Emergency maintenance|20240311-143008
+```
+
+Fields separated by `|`:
+1. Lock owner (user@host)
+2. Acquisition timestamp
+3. User message
+4. Configuration version
+
+## Related Commands
+
+- [`kamal deploy`](/deployment/deploy) - Deploy (acquires lock automatically)
+- [`kamal setup`](/deployment/setup) - Setup (acquires lock automatically)
+- [`kamal details`](/commands/details) - Check deployment status
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/lock.rb:1-46`

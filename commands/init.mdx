@@ -1,0 +1,395 @@
+---
+title: kamal init
+description: Create configuration stub files for a new Kamal deployment
+---
+
+The `kamal init` command generates the essential configuration files needed to deploy your application with Kamal.
+
+## Overview
+
+Init creates a starter configuration with sensible defaults that you can customize for your specific deployment needs.
+
+<Info>
+  Run `kamal init` once at the beginning of setting up Kamal for your project. This is typically the first Kamal command you'll execute.
+</Info>
+
+## Usage
+
+```bash
+kamal init
+```
+
+### Options
+
+<ParamField path="--bundle" type="boolean" default={false}>
+  Add Kamal to the Gemfile and create a bin/kamal binstub
+  
+  ```bash
+  kamal init --bundle
+  ```
+</ParamField>
+
+## What Init Creates
+
+The init command generates three essential components:
+
+<Steps>
+  <Step title="Configuration File">
+    Creates `config/deploy.yml` with deployment settings.
+    
+    ```ruby
+    # From main.rb:148-150
+    FileUtils.mkdir_p deploy_file.dirname
+    FileUtils.cp_r Pathname.new(File.expand_path("templates/deploy.yml", __dir__)), deploy_file
+    puts "Created configuration file in config/deploy.yml"
+    ```
+  </Step>
+  
+  <Step title="Secrets File">
+    Creates `.kamal/secrets` for storing sensitive credentials.
+    
+    ```ruby
+    # From main.rb:153-156
+    FileUtils.mkdir_p secrets_file.dirname
+    FileUtils.cp_r Pathname.new(File.expand_path("templates/secrets", __dir__)), secrets_file
+    puts "Created .kamal/secrets file"
+    ```
+  </Step>
+  
+  <Step title="Sample Hooks">
+    Creates `.kamal/hooks/` directory with sample deployment hooks.
+    
+    ```ruby
+    # From main.rb:159-164
+    hooks_dir.mkpath
+    Pathname.new(File.expand_path("templates/sample_hooks", __dir__)).each_child do |sample_hook|
+      FileUtils.cp sample_hook, hooks_dir, preserve: true
+    end
+    puts "Created sample hooks in .kamal/hooks"
+    ```
+  </Step>
+</Steps>
+
+## Example Output
+
+```bash
+$ kamal init
+
+Created configuration file in config/deploy.yml
+Created .kamal/secrets file
+Created sample hooks in .kamal/hooks
+```
+
+## Generated Files
+
+### config/deploy.yml
+
+The main configuration file with deployment settings:
+
+```yaml config/deploy.yml
+# Name of your application. Used to uniquely configure containers.
+service: my-app
+
+# Name of the container image.
+image: my-user/my-app
+
+# Deploy to these servers.
+servers:
+  web:
+    - 192.168.0.1
+
+# Enable SSL auto certification via Let's Encrypt
+proxy:
+  ssl: true
+  host: app.example.com
+
+# Credentials for your image host.
+registry:
+  server: localhost:5555
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# Configure builder setup.
+builder:
+  arch: amd64
+```
+
+<Note>
+  The generated file includes comments explaining each section. Customize these values for your deployment.
+</Note>
+
+### .kamal/secrets
+
+A shell script template for providing secrets:
+
+```bash .kamal/secrets
+# Secrets defined here are available for reference in config/deploy.yml.
+# DO NOT ENTER RAW CREDENTIALS HERE!
+
+# Option 1: Read from environment
+KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD
+
+# Option 2: Read via command
+# RAILS_MASTER_KEY=$(cat config/master.key)
+
+# Option 3: Use password manager
+# SECRETS=$(kamal secrets fetch --adapter 1password --account my-account --from MyVault/MyItem KAMAL_REGISTRY_PASSWORD)
+# KAMAL_REGISTRY_PASSWORD=$(kamal secrets extract KAMAL_REGISTRY_PASSWORD $SECRETS)
+```
+
+<Warning>
+  **Never commit raw credentials to `.kamal/secrets`**. This file should be git-ignored. Use environment variables or password managers instead.
+</Warning>
+
+### .kamal/hooks/
+
+Sample deployment hooks for customizing deployment workflow:
+
+```bash
+.kamal/hooks/
+├── pre-build
+├── pre-deploy
+├── post-deploy
+└── docker-setup
+```
+
+Each hook is executable and runs at different stages of deployment.
+
+## Using --bundle Flag
+
+The `--bundle` option integrates Kamal into your Ruby project:
+
+```bash
+kamal init --bundle
+```
+
+This performs additional steps:
+
+<Steps>
+  <Step title="Add to Gemfile">
+    Adds Kamal gem to your project's Gemfile:
+    
+    ```ruby
+    # From main.rb:173
+    execute :bundle, :add, :kamal
+    ```
+  </Step>
+  
+  <Step title="Create Binstub">
+    Generates `bin/kamal` for running Kamal in your project context:
+    
+    ```ruby
+    # From main.rb:174
+    execute :bundle, :binstubs, :kamal
+    ```
+    
+    After this, you can run:
+    ```bash
+    bin/kamal deploy
+    ```
+  </Step>
+</Steps>
+
+### Output with --bundle
+
+```bash
+$ kamal init --bundle
+
+Created configuration file in config/deploy.yml
+Created .kamal/secrets file
+Created sample hooks in .kamal/hooks
+Adding Kamal to Gemfile and bundle...
+Bundling...
+Created binstub file in bin/kamal
+```
+
+## Idempotent Behavior
+
+Init is safe to run multiple times and won't overwrite existing files:
+
+```ruby
+# From main.rb:145-146
+if (deploy_file = Pathname.new(File.expand_path("config/deploy.yml"))).exist?
+  puts "Config file already exists in config/deploy.yml (remove first to create a new one)"
+end
+```
+
+```bash
+$ kamal init
+
+Config file already exists in config/deploy.yml (remove first to create a new one)
+```
+
+To regenerate files, remove them first:
+
+```bash
+rm config/deploy.yml
+rm .kamal/secrets
+rm -rf .kamal/hooks
+kamal init
+```
+
+## Next Steps After Init
+
+<Steps>
+  <Step title="Customize Configuration">
+    Edit `config/deploy.yml` with your servers, registry, and application settings:
+    
+    ```bash
+    vim config/deploy.yml
+    ```
+  </Step>
+  
+  <Step title="Configure Secrets">
+    Update `.kamal/secrets` with your credentials:
+    
+    ```bash
+    vim .kamal/secrets
+    ```
+  </Step>
+  
+  <Step title="Verify Configuration">
+    Check that your configuration is valid:
+    
+    ```bash
+    kamal config
+    ```
+  </Step>
+  
+  <Step title="Add to Version Control">
+    Commit configuration (but not secrets):
+    
+    ```bash
+    git add config/deploy.yml .kamal/hooks/
+    git add .gitignore  # Should ignore .kamal/secrets
+    git commit -m "Add Kamal configuration"
+    ```
+  </Step>
+  
+  <Step title="Run Setup">
+    Prepare servers and deploy:
+    
+    ```bash
+    kamal setup
+    ```
+  </Step>
+</Steps>
+
+## .gitignore Configuration
+
+Ensure `.kamal/secrets` is git-ignored:
+
+```gitignore .gitignore
+# Kamal secrets (contains sensitive credentials)
+/.kamal/secrets
+/.kamal/secrets-*
+
+# Kamal environment-specific overrides
+/config/deploy.*.yml
+```
+
+<Warning>
+  Never commit `.kamal/secrets` to version control. It contains sensitive credentials.
+</Warning>
+
+## Configuration Templates
+
+Init uses templates stored in Kamal's gem:
+
+- `templates/deploy.yml` - Configuration template
+- `templates/secrets` - Secrets template  
+- `templates/sample_hooks/` - Hook templates
+
+These are copied to your project when running init.
+
+## Common Configuration Changes
+
+After init, commonly changed settings:
+
+<CodeGroup>
+```yaml Production Servers
+servers:
+  web:
+    - 203.0.113.10
+    - 203.0.113.11
+  worker:
+    hosts:
+      - 203.0.113.12
+    cmd: bundle exec sidekiq
+```
+
+```yaml Docker Hub Registry
+registry:
+  username: your-dockerhub-username
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+image: your-dockerhub-username/your-app
+```
+
+```yaml Custom SSH User
+ssh:
+  user: deploy
+  keys:
+    - ~/.ssh/deploy_key
+```
+
+```yaml Environment Variables
+env:
+  secret:
+    - RAILS_MASTER_KEY
+    - DATABASE_URL
+  clear:
+    REDIS_URL: redis://redis.example.com:6379/0
+```
+</CodeGroup>
+
+## Troubleshooting
+
+### Permission Denied
+
+If init fails to create files:
+
+```bash
+# Ensure you have write permissions
+ls -la config/
+mkdir -p config
+chmod 755 config
+```
+
+### Bundle Command Not Found
+
+If using `--bundle` without bundler:
+
+```bash
+# Install bundler first
+gem install bundler
+
+# Then run init
+kamal init --bundle
+```
+
+### Files Already Exist
+
+To regenerate configuration:
+
+```bash
+# Backup existing config
+mv config/deploy.yml config/deploy.yml.bak
+
+# Regenerate
+kamal init
+
+# Merge your changes from backup
+```
+
+## Related Commands
+
+- [`kamal config`](/commands/config) - Verify configuration
+- [`kamal setup`](/deployment/setup) - Initial deployment after init
+- [`kamal secrets`](/commands/secrets) - Manage secrets
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/main.rb:140-179`

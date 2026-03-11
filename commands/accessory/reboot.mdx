@@ -1,0 +1,260 @@
+---
+title: kamal accessory reboot
+description: Reboot existing accessory container with a fresh start
+---
+
+The `kamal accessory reboot` command performs a complete restart of an accessory by stopping the container, removing it, and booting a new one. This is useful when you need to apply configuration changes or update to a new image.
+
+## Basic Usage
+
+```bash
+kamal accessory reboot <NAME>
+```
+
+### Reboot a Database
+
+```bash
+kamal accessory reboot mysql
+```
+
+### Reboot All Accessories
+
+```bash
+kamal accessory reboot all
+```
+
+<Warning>
+Reboot will stop the existing container, causing downtime for the accessory service.
+</Warning>
+
+## What Reboot Does
+
+The reboot command executes these steps in sequence:
+
+<Steps>
+  <Step title="Prepare">
+    Logs into the registry and ensures the Docker network exists.
+  </Step>
+  
+  <Step title="Pull Image">
+    Pulls the latest version of the accessory image from the registry.
+  </Step>
+  
+  <Step title="Stop Container">
+    Stops the currently running container gracefully.
+  </Step>
+  
+  <Step title="Remove Container">
+    Removes the stopped container completely.
+  </Step>
+  
+  <Step title="Boot New Container">
+    Starts a fresh container with the new image and current configuration.
+  </Step>
+</Steps>
+
+## When to Use Reboot
+
+### Apply Configuration Changes
+
+After updating your accessory configuration:
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7-alpine
+    host: 192.168.0.11
+    # Updated configuration
+    cmd: redis-server --maxmemory 4gb --maxmemory-policy allkeys-lru
+```
+
+```bash
+kamal accessory reboot redis
+# Applies the new command configuration
+```
+
+### Update to New Image Version
+
+<Tabs>
+  <Tab title="Before">
+    ```yaml deploy.yml
+    accessories:
+      postgres:
+        image: postgres:15
+        host: 192.168.0.10
+    ```
+  </Tab>
+  
+  <Tab title="After Update">
+    ```yaml deploy.yml
+    accessories:
+      postgres:
+        image: postgres:16
+        host: 192.168.0.10
+    ```
+    
+    ```bash
+    kamal accessory reboot postgres
+    # Pulls postgres:16 and starts new container
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Always backup your data before rebooting database accessories!
+</Warning>
+
+### Fix Unresponsive Container
+
+If an accessory becomes unresponsive:
+
+```bash
+kamal accessory reboot redis
+# Complete restart often resolves issues
+```
+
+## Examples
+
+### Reboot MySQL with New Configuration
+
+<CodeGroup>
+```yaml Updated Config
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    directories:
+      - mysql-data:/var/lib/mysql
+    options:
+      # New resource limits
+      memory: 8g
+      cpus: 4
+```
+
+```bash Reboot Command
+kamal accessory reboot mysql
+```
+
+```text Output
+INFO [abc123] Pulling mysql:8.0 on 192.168.0.10...
+INFO [abc123] Stopping mysql accessory on 192.168.0.10...
+INFO [abc123] Removing mysql container on 192.168.0.10...
+INFO [abc123] Booting mysql accessory on 192.168.0.10...
+```
+</CodeGroup>
+
+### Reboot All Accessories
+
+When you need to restart everything:
+
+```bash
+kamal accessory reboot all
+```
+
+<Note>
+Rebooting all accessories processes them sequentially, not in parallel, to avoid overloading the system.
+</Note>
+
+## Reboot vs. Restart
+
+| Command | Container Handling | Image Update | Use Case |
+|---------|-------------------|--------------|----------|
+| `reboot` | Removes and recreates container | Pulls latest image | Configuration changes, image updates |
+| `restart` | Stops and starts same container | No pull | Quick restart of existing container |
+
+<Info>
+Use [`kamal accessory restart`](/commands/accessory/restart) for simple restarts without container recreation.
+</Info>
+
+## Data Persistence
+
+### Volumes Persist Across Reboots
+
+Data in mounted directories survives reboots:
+
+```yaml deploy.yml
+accessories:
+  postgres:
+    image: postgres:15
+    host: 192.168.0.10
+    directories:
+      - postgres-data:/var/lib/postgresql/data  # Data persists
+```
+
+```bash
+kamal accessory reboot postgres
+# Data in postgres-data directory is preserved
+```
+
+### Non-Mounted Data is Lost
+
+<Warning>
+Any data stored inside the container (not in volumes) will be lost during reboot.
+</Warning>
+
+## Implementation Details
+
+From `accessory.rb:77-90`:
+
+```ruby
+def reboot(name)
+  with_lock do
+    if name == "all"
+      KAMAL.accessory_names.each { |accessory_name| reboot(accessory_name) }
+    else
+      prepare(name)
+      pull_image(name)
+      stop(name)
+      remove_container(name)
+      boot(name, prepare: false)
+    end
+  end
+end
+```
+
+## Troubleshooting
+
+### Reboot Fails to Stop Container
+
+```bash
+# Check container status first
+kamal accessory details mysql
+
+# Force stop if needed
+kamal accessory stop mysql
+kamal accessory remove mysql
+kamal accessory boot mysql
+```
+
+### Image Pull Fails
+
+```bash
+# Verify registry access
+kamal registry login
+
+# Check image name
+kamal config | grep -A 5 "accessories:"
+```
+
+### Container Won't Start After Reboot
+
+```bash
+# Check logs for errors
+kamal accessory logs mysql --lines 50
+
+# Verify configuration
+kamal accessory details mysql
+```
+
+## Related Commands
+
+- [`kamal accessory boot`](/commands/accessory/boot) - Boot new accessory
+- [`kamal accessory restart`](/commands/accessory/restart) - Quick restart without recreation
+- [`kamal accessory stop`](/commands/accessory/stop) - Stop running container
+- [`kamal accessory start`](/commands/accessory/start) - Start stopped container
+- [`kamal accessory remove`](/commands/accessory/remove) - Remove accessory completely
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Accessories Setup Guide](/guides/accessories-setup) - Setup guide

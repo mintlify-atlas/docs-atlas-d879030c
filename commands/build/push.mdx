@@ -1,0 +1,441 @@
+---
+title: kamal build push
+description: Build Docker image and push to registry
+---
+
+The `kamal build push` command builds your application's Docker image and pushes it to your configured container registry.
+
+## Usage
+
+```bash
+kamal build push [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--output" type="string" default="registry">
+  Export type for the build result. May be any export type supported by `docker buildx build --output`.
+  
+  Common values:
+  - `registry` - Push to a container registry (default)
+  - `docker` - Load into local Docker daemon
+  - `image` - Output as an image tarball
+  - `oci` - Output as OCI image layout
+</ParamField>
+
+<ParamField path="--no-cache" type="boolean" default="false">
+  Build without using Docker's build cache. Forces a complete rebuild of all layers.
+</ParamField>
+
+## Basic Examples
+
+<CodeGroup>
+```bash Standard Build
+kamal build push
+```
+
+```bash Force Rebuild
+kamal build push --no-cache
+```
+
+```bash Build to Local Docker
+kamal build push --output docker
+```
+</CodeGroup>
+
+## What It Does
+
+The `build push` command performs these steps:
+
+<Steps>
+  <Step title="Pre-Connect Hooks">
+    Runs pre-connect hooks if required (essential for remote builders or custom build environments)
+    
+    Reference: `lib/kamal/cli/build.rb:18`
+  </Step>
+  
+  <Step title="Docker Validation">
+    Ensures Docker is installed and accessible on the local machine
+    
+    Reference: `lib/kamal/cli/build.rb:20`
+  </Step>
+  
+  <Step title="Registry Login">
+    Logs into the container registry locally if `login_to_registry_locally?` is true
+    
+    Reference: `lib/kamal/cli/build.rb:21`
+  </Step>
+  
+  <Step title="Pre-Build Hook">
+    Executes the `pre-build` hook if defined in your configuration
+    
+    Reference: `lib/kamal/cli/build.rb:23`
+  </Step>
+  
+  <Step title="Uncommitted Changes Check">
+    Checks for uncommitted changes and warns if building with them
+    
+    Reference: `lib/kamal/cli/build.rb:25-37`
+  </Step>
+  
+  <Step title="Git Clone (Optional)">
+    If `builder.git_clone?` is true (no custom context), creates a clean Git clone for building
+    
+    Reference: `lib/kamal/cli/build.rb:27-34`
+  </Step>
+  
+  <Step title="Builder Inspection">
+    Inspects the builder to ensure it exists; creates it if missing
+    
+    Reference: `lib/kamal/cli/build.rb:42-56`
+  </Step>
+  
+  <Step title="Image Build & Push">
+    Builds the Docker image and pushes to the registry
+    
+    Reference: `lib/kamal/cli/build.rb:59-63`
+  </Step>
+</Steps>
+
+## Build Strategies
+
+The build process varies depending on your builder configuration:
+
+<Tabs>
+  <Tab title="Local Builder">
+    Builds on your local machine and pushes to the registry.
+    
+    ```yaml
+    builder:
+      driver: docker-container
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    **Best for:** Development, small teams with powerful machines
+  </Tab>
+  
+  <Tab title="Remote Builder">
+    Builds on a remote server via SSH and pushes from there.
+    
+    ```yaml
+    builder:
+      remote: ssh://docker@builder.example.com
+      arch:
+        - amd64
+        - arm64
+    ```
+    
+    **Best for:** Slow local machines, CI/CD environments
+  </Tab>
+  
+  <Tab title="Hybrid Builder">
+    Builds some architectures locally, others remotely.
+    
+    ```yaml
+    builder:
+      remote: ssh://docker@builder.example.com
+      arch:
+        - amd64  # Built locally if on amd64
+        - arm64  # Built remotely if on amd64
+    ```
+    
+    **Best for:** Multi-architecture builds with native performance
+  </Tab>
+  
+  <Tab title="Cloud Builder">
+    Uses Docker Build Cloud for managed builds.
+    
+    ```yaml
+    builder:
+      driver: cloud myorg/mybuilder
+    ```
+    
+    **Best for:** Enterprise teams, shared build cache
+  </Tab>
+</Tabs>
+
+See the [Build Strategies](/advanced/build-strategies) guide for detailed information.
+
+## Git Clone vs Context
+
+By default, Kamal creates a clean Git clone for building:
+
+<Tabs>
+  <Tab title="Git Clone (Default)">
+    ```yaml
+    builder:
+      # context not set - uses git clone
+      arch: amd64
+    ```
+    
+    **Behavior:**
+    - Creates temporary clone in `Dir.tmpdir/kamal-clones/`
+    - Only includes committed changes
+    - Warns about uncommitted changes (they're ignored)
+    - Ensures clean, reproducible builds
+    
+    Reference: `lib/kamal/cli/build.rb:27-30`
+  </Tab>
+  
+  <Tab title="Custom Context">
+    ```yaml
+    builder:
+      context: .  # Use local checkout
+      arch: amd64
+    ```
+    
+    **Behavior:**
+    - Uses local working directory
+    - Includes uncommitted changes
+    - Warns about uncommitted changes (they're included)
+    - Faster for development iterations
+    
+    Reference: `lib/kamal/cli/build.rb:35-37`
+  </Tab>
+</Tabs>
+
+<Warning>
+Uncommitted changes in your build context may lead to inconsistent deployments. Use git clone mode (default) for production builds.
+</Warning>
+
+## Build Cache
+
+Speed up builds by enabling caching:
+
+<Tabs>
+  <Tab title="Registry Cache">
+    ```yaml
+    builder:
+      cache:
+        type: registry
+        image: my-app-build-cache
+        options: mode=max
+    ```
+    
+    Stores build cache as a container image in your registry.
+  </Tab>
+  
+  <Tab title="GitHub Actions Cache">
+    ```yaml
+    builder:
+      cache:
+        type: gha
+        options: mode=max,scope=main
+    ```
+    
+    Uses GitHub Actions cache storage (only works in GHA runners).
+  </Tab>
+</Tabs>
+
+The `--no-cache` option bypasses all caching:
+
+```bash
+kamal build push --no-cache
+```
+
+## Build Secrets
+
+Secrets from `.kamal/secrets` can be exposed during build:
+
+```yaml
+builder:
+  secrets:
+    - GITHUB_TOKEN
+    - NPM_TOKEN
+```
+
+Use in your Dockerfile:
+
+```dockerfile
+RUN --mount=type=secret,id=GITHUB_TOKEN \
+    BUNDLE_GITHUB__COM=x-access-token:$(cat /run/secrets/GITHUB_TOKEN) \
+    bundle install
+```
+
+<Info>
+Secrets are mounted at build time only and do not persist in the final image layers.
+</Info>
+
+## Multi-Architecture Builds
+
+Build for multiple CPU architectures:
+
+```yaml
+builder:
+  arch:
+    - amd64
+    - arm64
+```
+
+Kamal builds both architectures and creates a multi-arch manifest:
+
+```bash
+$ kamal build push
+=> Building for linux/amd64, linux/arm64
+=> Pushing manifest for myapp:latest
+```
+
+<Note>
+Multi-architecture builds require the `docker-container` or `docker-buildx` driver. The basic `docker` driver only supports single-arch builds.
+</Note>
+
+## Output Types
+
+The `--output` option controls where the built image goes:
+
+<ParamField path="registry" default>
+  Push to container registry (standard deployment workflow)
+  
+  ```bash
+  kamal build push --output registry
+  ```
+</ParamField>
+
+<ParamField path="docker">
+  Load into local Docker daemon (for local testing)
+  
+  ```bash
+  kamal build push --output docker
+  docker images  # See the built image locally
+  ```
+</ParamField>
+
+<ParamField path="image">
+  Export as image tarball
+  
+  ```bash
+  kamal build push --output image
+  ```
+</ParamField>
+
+<ParamField path="oci">
+  Export as OCI image layout
+  
+  ```bash
+  kamal build push --output oci
+  ```
+</ParamField>
+
+## Builder Auto-Creation
+
+If the builder doesn't exist, Kamal automatically creates it:
+
+```bash
+$ kamal build push
+WARN: Missing compatible builder, so creating a new one first
+INFO [a1b2c3d4] Running docker buildx create on localhost
+INFO [a1b2c3d4] Finished in 2.345s
+INFO [e5f6g7h8] Running docker buildx build on localhost
+```
+
+Reference: `lib/kamal/cli/build.rb:44-56`
+
+You can also create the builder manually:
+
+```bash
+kamal build create
+```
+
+## Example Workflows
+
+<AccordionGroup>
+  <Accordion title="Basic Development Build">
+    ```bash
+    # Make changes to code
+    git add .
+    git commit -m "Add new feature"
+    
+    # Build and push
+    kamal build push
+    
+    # Deploy
+    kamal deploy
+    ```
+  </Accordion>
+  
+  <Accordion title="Force Rebuild Without Cache">
+    ```bash
+    # Useful when dependencies have changed
+    # or you suspect a caching issue
+    kamal build push --no-cache
+    ```
+  </Accordion>
+  
+  <Accordion title="Build for Local Testing">
+    ```bash
+    # Build and load into local Docker
+    kamal build push --output docker
+    
+    # Run locally
+    docker run -it myapp:latest
+    ```
+  </Accordion>
+  
+  <Accordion title="Pre-Deployment Build">
+    ```bash
+    # Build without deploying
+    kamal build push
+    
+    # Review and test
+    # ...
+    
+    # Deploy the built image
+    kamal deploy
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Commands
+
+- [`kamal build deliver`](/commands/build/deliver) - Build, push, and pull to servers
+- [`kamal build pull`](/commands/build/pull) - Pull built image to servers
+- [`kamal build create`](/commands/build/create) - Create builder setup
+- [`kamal deploy`](/commands/deploy) - Full deployment including build
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Build fails: no space left on device">
+    Your Docker build cache may be full:
+    
+    ```bash
+    docker system prune -a
+    ```
+  </Accordion>
+  
+  <Accordion title="Build fails: buildx not found">
+    Ensure you have a recent version of Docker with buildx support:
+    
+    ```bash
+    docker buildx version
+    ```
+    
+    If missing, update Docker to version 19.03 or later.
+  </Accordion>
+  
+  <Accordion title="Remote builder connection fails">
+    Test SSH connectivity:
+    
+    ```bash
+    ssh docker@builder.example.com docker version
+    ```
+    
+    Ensure the remote host has Docker installed and your SSH key is authorized.
+  </Accordion>
+  
+  <Accordion title="Push fails: unauthorized">
+    Check registry credentials in `.kamal/secrets`:
+    
+    ```bash
+    cat .kamal/secrets
+    ```
+    
+    Ensure `KAMAL_REGISTRY_PASSWORD` (or your configured env var) is set correctly.
+  </Accordion>
+</AccordionGroup>
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/build.rb:10-67`

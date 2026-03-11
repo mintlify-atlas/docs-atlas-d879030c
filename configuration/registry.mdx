@@ -1,0 +1,382 @@
+---
+title: Registry Configuration
+description: Configure container registry authentication and settings
+---
+
+The registry configuration defines where your Docker images are stored and how to authenticate.
+
+## Required Configuration
+
+At minimum, you must configure registry authentication:
+
+```yaml
+registry:
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+<ParamField path="registry" type="object" required>
+  Registry configuration is required in the root configuration.
+</ParamField>
+
+## Registry Server
+
+<ParamField path="server" type="string">
+  Registry server hostname. Defaults to Docker Hub if not specified.
+</ParamField>
+
+```yaml
+registry:
+  server: ghcr.io
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+## Authentication
+
+### Username
+
+<ParamField path="username" type="string | array">
+  Registry username. Can reference a secret by passing an array.
+</ParamField>
+
+<Tabs>
+  <Tab title="Direct Value">
+    ```yaml
+    registry:
+      username: my-docker-username
+    ```
+  </Tab>
+  
+  <Tab title="From Secret">
+    ```yaml
+    registry:
+      username:
+        - REGISTRY_USERNAME
+    ```
+  </Tab>
+</Tabs>
+
+### Password
+
+<ParamField path="password" type="array">
+  Registry password from `.kamal/secrets`. Always use an array format to reference a secret.
+</ParamField>
+
+```yaml
+registry:
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+<Warning>
+Always use access tokens or app passwords instead of account passwords. Never commit passwords to version control.
+</Warning>
+
+## Registry Examples
+
+### Docker Hub
+
+<Tabs>
+  <Tab title="Public Repository">
+    ```yaml
+    registry:
+      username: dockerhub-username
+      password:
+        - KAMAL_REGISTRY_PASSWORD
+    ```
+    
+    <Note>
+    Docker Hub creates public repositories by default. Set up a private repository before deploying, or change default privacy settings at [Docker Hub](https://hub.docker.com/repository-settings/default-privacy).
+    </Note>
+  </Tab>
+  
+  <Tab title="With Server">
+    ```yaml
+    registry:
+      server: docker.io
+      username: dockerhub-username
+      password:
+        - KAMAL_REGISTRY_PASSWORD
+    ```
+  </Tab>
+</Tabs>
+
+### GitHub Container Registry (ghcr.io)
+
+```yaml
+registry:
+  server: ghcr.io
+  username: github-username
+  password:
+    - GITHUB_TOKEN
+```
+
+**Set up GitHub token:**
+
+1. Create a Personal Access Token with `write:packages` scope
+2. Add to `.kamal/secrets`:
+   ```
+   GITHUB_TOKEN=ghp_your_token_here
+   ```
+
+### AWS Elastic Container Registry (ECR)
+
+```yaml
+registry:
+  server: 123456789.dkr.ecr.us-east-1.amazonaws.com
+  username: AWS
+  password: <%= %x(aws ecr get-login-password --region us-east-1) %>
+```
+
+<Note>
+ECR tokens expire after 12 hours. Using ERB with the AWS CLI command ensures you always get a fresh token.
+</Note>
+
+**Prerequisites:**
+- AWS CLI installed locally
+- AWS credentials configured (`~/.aws/credentials` or environment variables)
+- Proper IAM permissions for ECR
+
+### Google Artifact Registry
+
+```yaml
+registry:
+  server: us-docker.pkg.dev
+  username: _json_key_base64
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+**Set up Google Artifact Registry:**
+
+1. [Create a service account](https://cloud.google.com/iam/docs/service-accounts-create)
+2. Assign `roles/artifactregistry.writer` role
+3. Generate and download JSON key
+4. Base64 encode the key:
+   ```bash
+   base64 -i /path/to/key.json | tr -d "\n"
+   ```
+5. Add to `.kamal/secrets`:
+   ```
+   KAMAL_REGISTRY_PASSWORD=<base64-encoded-key>
+   ```
+
+### Azure Container Registry (ACR)
+
+```yaml
+registry:
+  server: myregistry.azurecr.io
+  username: myregistry
+  password:
+    - AZURE_REGISTRY_PASSWORD
+```
+
+### DigitalOcean Container Registry
+
+```yaml
+registry:
+  server: registry.digitalocean.com
+  username: DO_REGISTRY_USERNAME
+  password:
+    - DO_REGISTRY_PASSWORD
+```
+
+### GitLab Container Registry
+
+```yaml
+registry:
+  server: registry.gitlab.com
+  username: gitlab-username
+  password:
+    - GITLAB_TOKEN
+```
+
+## Local Registry
+
+Run a local Docker registry on the deployment host:
+
+```yaml
+registry:
+  server: localhost:5555
+```
+
+<Note>
+When the server starts with `localhost`, Kamal automatically starts a local Docker registry container on that port.
+</Note>
+
+**Use cases:**
+- Single-server deployments
+- Testing without external registry
+- Air-gapped environments
+
+<Warning>
+Local registries are not suitable for multi-server deployments as each server would have its own registry.
+</Warning>
+
+### Local Registry with Remote Builder
+
+When using a local registry with a remote builder, you must use an SSH URL:
+
+```yaml
+registry:
+  server: localhost:5555
+
+builder:
+  remote: ssh://docker@builder.example.com
+```
+
+## Accessory Registry
+
+Accessories can use a different registry than the main application:
+
+```yaml
+registry:
+  server: ghcr.io
+  username: my-user
+  password:
+    - GITHUB_TOKEN
+
+accessories:
+  mysql:
+    image: mysql:8.0
+    # Uses Docker Hub (default)
+    
+  redis:
+    image: redis:7
+    registry:
+      server: registry.example.com
+      username: redis-user
+      password:
+        - REDIS_REGISTRY_PASSWORD
+```
+
+## Validation
+
+Test your registry configuration:
+
+```bash
+kamal registry login
+```
+
+This command:
+1. Reads your registry configuration
+2. Attempts to authenticate
+3. Reports success or specific errors
+
+## Secrets Management
+
+Store registry credentials in `.kamal/secrets`:
+
+```shell
+# .kamal/secrets
+KAMAL_REGISTRY_PASSWORD=your_access_token_here
+GITHUB_TOKEN=ghp_your_github_token
+```
+
+With destinations:
+
+```shell
+# .kamal/secrets-common (shared across all destinations)
+KAMAL_REGISTRY_PASSWORD=prod_token
+
+# .kamal/secrets.staging (staging-specific)
+KAMAL_REGISTRY_PASSWORD=staging_token
+```
+
+<Warning>
+Add `.kamal/secrets*` to your `.gitignore` to avoid committing credentials.
+</Warning>
+
+## Image Naming
+
+The full image name is constructed as:
+
+```
+<server>/<image>:<tag>
+```
+
+For example:
+```yaml
+registry:
+  server: ghcr.io
+image: my-user/my-app
+```
+
+Produces: `ghcr.io/my-user/my-app:abc123`
+
+## Multi-Registry Setup
+
+Use ERB and destinations for different registries per environment:
+
+<CodeGroup>
+```yaml config/deploy.yml
+registry:
+  server: <%= ENV['KAMAL_DESTINATION'] == 'production' ? 'ghcr.io' : 'registry.example.com' %>
+  username: my-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml config/deploy.production.yml
+registry:
+  server: ghcr.io
+  username: prod-user
+  password:
+    - PROD_REGISTRY_PASSWORD
+```
+
+```yaml config/deploy.staging.yml
+registry:
+  server: registry.staging.example.com
+  username: staging-user
+  password:
+    - STAGING_REGISTRY_PASSWORD
+```
+</CodeGroup>
+
+## Troubleshooting
+
+### Authentication Failed
+
+```bash
+# Verify secret is set
+kamal secrets fetch KAMAL_REGISTRY_PASSWORD
+
+# Test login manually
+kamal registry login
+
+# Check Docker credentials
+docker login <server>
+```
+
+### Image Push Denied
+
+- Verify the user has push permissions
+- For Docker Hub, ensure repository exists or default privacy is set
+- For private registries, check repository access policies
+
+### ECR Token Expired
+
+Ensure you're using ERB to dynamically fetch the token:
+
+```yaml
+registry:
+  password: <%= %x(aws ecr get-login-password --region us-east-1) %>
+```
+
+Not:
+
+```yaml
+registry:
+  password:
+    - AWS_ECR_PASSWORD  # Will expire after 12 hours
+```
+
+## Related Configuration
+
+- [Builder Configuration](/configuration/builder) - Configure image builds
+- [Accessories](/configuration/accessories) - Use different registries for accessories
+- [Environment Variables](/configuration/environment) - Store registry credentials in secrets

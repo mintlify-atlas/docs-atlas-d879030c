@@ -1,0 +1,241 @@
+---
+title: kamal redeploy
+description: Quickly redeploy your application without bootstrapping, proxy checks, or pruning
+---
+
+The `kamal redeploy` command provides a faster deployment option by skipping server bootstrapping, proxy initialization, and resource pruning steps.
+
+## Usage
+
+```bash
+kamal redeploy [OPTIONS]
+```
+
+## Description
+
+The redeploy command is optimized for speed when you need to quickly push changes. It performs a minimal deployment workflow:
+
+1. **Build and push** - Creates and uploads Docker image
+2. **Detect stale containers** - Identifies old containers
+3. **Boot application** - Starts new containers
+
+**What's skipped compared to `deploy`:**
+- Server bootstrapping
+- kamal-proxy verification and startup
+- Accessory booting
+- Container and image pruning
+
+This makes redeploys significantly faster, ideal for development and staging environments or when you're iterating quickly.
+
+<Note>
+Use `kamal redeploy` when servers are already set up and you just want to push code changes quickly.
+</Note>
+
+## Options
+
+<ParamField path="--skip-push" type="boolean" default={false}>
+  Skip building and pushing the Docker image. Pull the existing image from the registry instead.
+  
+  **Alias:** `-P`
+</ParamField>
+
+<ParamField path="--no-cache" type="boolean" default={false}>
+  Build the Docker image without using Docker's build cache, forcing a complete rebuild.
+</ParamField>
+
+## Comparison: deploy vs redeploy
+
+| Step | `kamal deploy` | `kamal redeploy` |
+|------|----------------|------------------|
+| Build and push image | ✓ | ✓ |
+| Bootstrap servers | ✓ | ✗ |
+| Ensure kamal-proxy running | ✓ | ✗ |
+| Boot accessories | ✓ (if needed) | ✗ |
+| Detect stale containers | ✓ | ✓ |
+| Boot application | ✓ | ✓ |
+| Prune old resources | ✓ | ✗ |
+| **Typical duration** | 60-90s | 20-30s |
+
+## Examples
+
+### Quick Redeploy
+
+Rapidly deploy code changes:
+
+```bash
+kamal redeploy
+```
+
+### Redeploy Pre-built Image
+
+Skip the build if the image is already in the registry:
+
+```bash
+kamal redeploy --skip-push
+```
+
+```bash
+kamal redeploy -P
+```
+
+### Redeploy with Clean Build
+
+Force a rebuild without cache:
+
+```bash
+kamal redeploy --no-cache
+```
+
+### Combined Options
+
+```bash
+kamal redeploy --skip-push --no-cache
+```
+
+## Expected Output
+
+<CodeGroup>
+```bash Successful Redeploy
+Build and push app image...
+  INFO [local] docker build --platform linux/amd64 -t myapp:2024-03-11-def456 .
+  Step 1/10 : FROM ruby:3.2
+  ...
+  INFO [local] docker push myapp:2024-03-11-def456
+  
+Detect stale containers...
+  INFO [192.168.1.10] Found myapp-web-2024-03-11-abc123
+  INFO [192.168.1.10] Stopping stale container
+  
+Booting app containers...
+  INFO [192.168.1.10] Starting myapp-web-2024-03-11-def456
+  INFO [192.168.1.11] Starting myapp-web-2024-03-11-def456
+  INFO Containers are healthy
+  
+Finished in 24.7 seconds
+```
+
+```bash With Skip Push
+Pull app image...
+  INFO [192.168.1.10] docker pull myapp:2024-03-11-def456
+  INFO [192.168.1.11] docker pull myapp:2024-03-11-def456
+  
+Detect stale containers...
+  INFO Stopping old containers
+  
+Booting app containers...
+  INFO Starting new containers
+  INFO All containers healthy
+  
+Finished in 12.3 seconds
+```
+</CodeGroup>
+
+## When to Use Redeploy
+
+### Good Use Cases
+
+✓ **Development/staging environments** - Fast iteration cycles
+
+✓ **Hot fixes** - Quick patches that need to go out fast
+
+✓ **Code-only changes** - When you haven't modified infrastructure
+
+✓ **Iterative testing** - Testing changes rapidly
+
+### When to Use `deploy` Instead
+
+✗ **Production deployments** - Use full `deploy` for completeness
+
+✗ **Infrastructure changes** - Config or server modifications
+
+✗ **First deployment** - Use `kamal setup` instead
+
+✗ **Resource cleanup needed** - When old containers are accumulating
+
+## Hooks
+
+Like the deploy command, redeploy executes hooks:
+
+- **pre-deploy** - Before redeployment (secrets available)
+- **post-deploy** - After successful redeployment (includes runtime)
+
+<Note>
+Hooks are identical between `deploy` and `redeploy` - you don't need separate hook files.
+</Note>
+
+## Important Considerations
+
+<Warning>
+**No Pruning:** Redeploy doesn't clean up old containers and images. Run `kamal prune all` periodically to free disk space.
+</Warning>
+
+<Warning>
+**No Proxy Checks:** If kamal-proxy is down, redeploy won't restart it. Use `kamal proxy boot` first.
+</Warning>
+
+### Manual Cleanup
+
+After multiple redeploys, clean up resources:
+
+```bash
+# Remove old containers and images
+kamal prune all
+
+# Check disk usage
+kamal app exec "df -h"
+
+# View all containers
+kamal app containers
+```
+
+## Related Commands
+
+- [`kamal deploy`](/commands/deploy) - Full deployment with all checks
+- [`kamal setup`](/commands/setup) - Initial deployment with bootstrapping
+- [`kamal prune all`](/commands/prune) - Clean up old resources
+- [`kamal proxy boot`](/commands/proxy) - Restart kamal-proxy
+
+## Troubleshooting
+
+### Redeploy Fails but Deploy Works
+
+If redeploy fails but full deploy works:
+
+```bash
+# Check if proxy is running
+kamal proxy status
+
+# Restart proxy if needed
+kamal proxy boot
+
+# Then retry redeploy
+kamal redeploy
+```
+
+### Disk Space Issues
+
+If servers run out of disk space:
+
+```bash
+# Check container count
+kamal app containers
+
+# Prune old resources
+kamal prune all
+
+# Use full deploy (includes pruning)
+kamal deploy
+```
+
+### Containers Not Starting
+
+```bash
+# Check logs
+kamal app logs
+
+# Verify health checks
+kamal app details
+
+# Try full deploy
+kamal deploy
+```

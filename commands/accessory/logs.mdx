@@ -1,0 +1,426 @@
+---
+title: kamal accessory logs
+description: View and follow logs from accessory containers
+---
+
+The `kamal accessory logs` command displays log output from accessory containers. It supports filtering, following live logs, and searching through output.
+
+## Basic Usage
+
+```bash
+kamal accessory logs <NAME>
+```
+
+### View Recent Logs
+
+```bash
+kamal accessory logs mysql
+```
+
+By default, shows the last 100 lines of logs.
+
+## Command Options
+
+### Limit Number of Lines
+
+```bash
+kamal accessory logs mysql --lines 50
+kamal accessory logs mysql -n 50
+```
+
+Show specific number of recent log lines.
+
+### Show Logs Since Timestamp
+
+```bash
+# Absolute timestamp
+kamal accessory logs mysql --since 2024-03-11T10:30:00Z
+
+# Relative time
+kamal accessory logs mysql --since 1h    # Last hour
+kamal accessory logs mysql --since 30m   # Last 30 minutes
+kamal accessory logs mysql --since 1d    # Last day
+kamal accessory logs mysql -s 2h         # Last 2 hours
+```
+
+<Info>
+When using `--since`, all logs from that point forward are shown (no default limit).
+</Info>
+
+### Follow Logs in Real-Time
+
+```bash
+kamal accessory logs mysql --follow
+kamal accessory logs mysql -f
+```
+
+<Note>
+Follow mode connects to the primary server (or specific host with `--hosts`).
+</Note>
+
+### Search with Grep
+
+```bash
+# Show only lines matching pattern
+kamal accessory logs mysql --grep "ERROR"
+kamal accessory logs mysql -g "connection refused"
+
+# Case-insensitive search
+kamal accessory logs mysql --grep "warning" --grep-options "-i"
+
+# Multiple patterns (OR)
+kamal accessory logs mysql --grep "ERROR|WARN"
+
+# Extended regex
+kamal accessory logs mysql --grep "ERROR.*timeout" --grep-options "-E"
+```
+
+<Info>
+When using `--grep`, all matching lines are shown (no default limit).
+</Info>
+
+### Skip Timestamps
+
+```bash
+kamal accessory logs mysql --skip-timestamps
+kamal accessory logs mysql -T
+```
+
+Disable timestamp prefixes in output.
+
+## Examples
+
+### View MySQL Error Logs
+
+<Tabs>
+  <Tab title="Recent Errors">
+    ```bash
+    kamal accessory logs mysql --grep "ERROR" --lines 50
+    ```
+  </Tab>
+  
+  <Tab title="Last Hour">
+    ```bash
+    kamal accessory logs mysql --since 1h --grep "ERROR"
+    ```
+  </Tab>
+  
+  <Tab title="Follow Errors">
+    ```bash
+    kamal accessory logs mysql --follow --grep "ERROR|WARN"
+    ```
+  </Tab>
+</Tabs>
+
+### Monitor Redis Activity
+
+```bash
+# Follow all Redis logs
+kamal accessory logs redis --follow
+
+# Monitor connections
+kamal accessory logs redis --follow --grep "Accepted"
+
+# Watch for memory warnings
+kamal accessory logs redis --follow --grep "memory"
+```
+
+### Debug PostgreSQL Issues
+
+<CodeGroup>
+```bash Connection Issues
+kamal accessory logs postgres --grep "connection" --since 30m
+```
+
+```bash Query Performance
+kamal accessory logs postgres --grep "duration:.*ms" --since 1h
+```
+
+```bash Authentication
+kamal accessory logs postgres --grep "authentication failed"
+```
+</CodeGroup>
+
+### Track Startup Process
+
+After booting an accessory:
+
+```bash
+# Boot accessory
+kamal accessory boot mysql
+
+# Watch startup logs
+kamal accessory logs mysql --follow --since 1m
+```
+
+### Export Logs for Analysis
+
+```bash
+# Save logs to file
+kamal accessory logs mysql --since 1d > mysql-logs.txt
+
+# Save errors only
+kamal accessory logs mysql --since 1d --grep "ERROR" > mysql-errors.txt
+```
+
+## Multiple Hosts
+
+When an accessory runs on multiple hosts:
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+```
+
+### View Logs from All Hosts
+
+```bash
+kamal accessory logs redis --lines 50
+```
+
+Shows logs from all hosts with hostname prefixes:
+
+```text
+192.168.0.11: 1:C 11 Mar 2024 10:30:15.123 # Server started
+192.168.0.12: 1:C 11 Mar 2024 10:30:16.456 # Server started
+192.168.0.11: 1:M 11 Mar 2024 10:30:17.789 * Ready to accept connections
+192.168.0.12: 1:M 11 Mar 2024 10:30:18.012 * Ready to accept connections
+```
+
+### Follow Logs from Specific Host
+
+```bash
+kamal accessory logs redis --follow --hosts 192.168.0.11
+```
+
+## Timestamp Formats
+
+### With Timestamps (Default)
+
+```text
+2024-03-11T10:30:15.123456Z: [Note] Server initialized
+2024-03-11T10:30:16.234567Z: [Note] Ready for connections
+```
+
+### Without Timestamps
+
+```bash
+kamal accessory logs mysql --skip-timestamps
+```
+
+```text
+[Note] Server initialized
+[Note] Ready for connections
+```
+
+## Common Patterns
+
+### Find Startup Issues
+
+```bash
+kamal accessory logs postgres --since 5m --grep "ERROR|FATAL"
+```
+
+### Monitor Connection Counts
+
+```bash
+kamal accessory logs mysql --follow --grep "Connected"
+```
+
+### Debug Slow Queries
+
+```bash
+kamal accessory logs postgres --grep "duration:.*[0-9]{4}.*ms" --since 1h
+# Finds queries taking 1000+ ms
+```
+
+### Watch Cache Hit Rates
+
+```bash
+kamal accessory logs redis --follow --grep "keyspace"
+```
+
+### Track Resource Usage
+
+```bash
+kamal accessory logs mysql --follow --grep "memory|cpu"
+```
+
+## Implementation Details
+
+From `accessory.rb:184-212`:
+
+```ruby
+def logs(name)
+  with_accessory(name) do |accessory, hosts|
+    grep = options[:grep]
+    grep_options = options[:grep_options]
+    timestamps = !options[:skip_timestamps]
+    
+    if options[:follow]
+      run_locally do
+        info "Following logs on #{hosts}..."
+        info accessory.follow_logs(timestamps: timestamps, grep: grep, grep_options: grep_options)
+        exec accessory.follow_logs(timestamps: timestamps, grep: grep, grep_options: grep_options)
+      end
+    else
+      since = options[:since]
+      lines = options[:lines].presence || ((since || grep) ? nil : 100) # Default to 100 lines
+      
+      on(hosts) do
+        puts capture_with_info(*accessory.logs(timestamps: timestamps, since: since, lines: lines, grep: grep, grep_options: grep_options))
+      end
+    end
+  end
+end
+```
+
+## Use Cases
+
+### Troubleshooting Boot Failures
+
+```bash
+# Try to boot
+kamal accessory boot mysql
+
+# Check what went wrong
+kamal accessory logs mysql --lines 100
+```
+
+### Monitor Production Traffic
+
+```bash
+# In separate terminal
+kamal accessory logs redis --follow
+
+# Watch traffic patterns during deployment
+```
+
+### Audit Security Events
+
+```bash
+kamal accessory logs postgres --since 1d --grep "authentication failed|unauthorized" > security-audit.log
+```
+
+### Performance Analysis
+
+```bash
+# Collect slow query logs
+kamal accessory logs mysql --since 6h --grep "Query_time: [1-9]" > slow-queries.log
+
+# Analyze later
+grep "Query_time" slow-queries.log | sort -t: -k2 -n
+```
+
+### Debug Connection Issues
+
+```bash
+# Watch connection attempts
+kamal accessory logs mysql --follow --grep "Connect"
+
+# In another terminal, test connection
+curl http://your-app.com/health
+```
+
+## Troubleshooting
+
+### No Logs Appearing
+
+```bash
+# Verify container is running
+kamal accessory details mysql
+
+# Check if logs are being generated
+ssh user@host "docker logs myapp-mysql"
+```
+
+### Follow Mode Not Working
+
+```bash
+# Try with specific host
+kamal accessory logs mysql --follow --hosts 192.168.0.10
+
+# Check SSH connection
+ssh user@192.168.0.10
+```
+
+### Grep Not Finding Matches
+
+```bash
+# Test pattern locally first
+kamal accessory logs mysql --lines 1000 | grep "pattern"
+
+# Check case sensitivity
+kamal accessory logs mysql --grep "error" --grep-options "-i"
+```
+
+### Logs Truncated
+
+```bash
+# Increase line limit
+kamal accessory logs mysql --lines 5000
+
+# Or use time-based filter
+kamal accessory logs mysql --since 2h
+```
+
+## Tips and Tricks
+
+### Combine Multiple Filters
+
+```bash
+kamal accessory logs mysql --since 1h --grep "ERROR" --lines 200
+# Shows up to 200 error lines from last hour
+```
+
+### Create Log Monitoring Script
+
+```bash
+#!/bin/bash
+# monitor-accessories.sh
+
+while true; do
+  clear
+  echo "=== MySQL Errors ==="
+  kamal accessory logs mysql --since 5m --grep "ERROR" --lines 10
+  
+  echo ""
+  echo "=== Redis Warnings ==="
+  kamal accessory logs redis --since 5m --grep "WARN" --lines 10
+  
+  sleep 30
+done
+```
+
+### Use with Watch Command
+
+```bash
+watch -n 5 'kamal accessory logs mysql --since 1m --grep "ERROR"'
+# Updates every 5 seconds
+```
+
+### Pipe to Analysis Tools
+
+```bash
+# Most common errors
+kamal accessory logs mysql --since 1d --grep "ERROR" | cut -d: -f3- | sort | uniq -c | sort -rn | head -10
+
+# Errors by hour
+kamal accessory logs mysql --since 1d --grep "ERROR" | cut -d: -f1 | cut -dT -f2 | cut -d: -f1 | sort | uniq -c
+```
+
+## Related Commands
+
+- [`kamal accessory details`](/commands/accessory/details) - View container status
+- [`kamal accessory boot`](/commands/accessory/boot) - Start accessory
+- [`kamal accessory restart`](/commands/accessory/restart) - Restart accessory
+- [`kamal app logs`](/commands/app/logs) - View application logs
+
+## See Also
+
+- [Troubleshooting Logs](/troubleshooting/logs) - Log analysis guide
+- [Debugging Guide](/troubleshooting/debugging) - Debug common issues

@@ -1,0 +1,293 @@
+---
+title: kamal rollback
+description: Rollback your application to a previous version
+---
+
+The `kamal rollback` command reverts your application to a previously deployed version, providing a quick recovery mechanism when issues are discovered.
+
+## Usage
+
+```bash
+kamal rollback VERSION
+```
+
+## Description
+
+Rollback switches your running application to a specific previous version by starting containers from a previously deployed image. This is much faster than a full deployment since the image already exists on your servers.
+
+**How it works:**
+
+1. **Verify version exists** - Checks that the specified version's container is available
+2. **Run pre-deploy hook** - Executes hook with secrets
+3. **Boot old version** - Starts containers with the specified version
+4. **Switch traffic** - Routes traffic to the rolled-back version
+5. **Run post-deploy hook** - Executes completion hook
+
+<Warning>
+Rollback only works with versions that still have containers on your servers. If containers have been pruned, you'll need to redeploy that version.
+</Warning>
+
+## Arguments
+
+<ParamField path="VERSION" type="string" required>
+  The version identifier to roll back to. This is typically a timestamp-based version like `2024-03-11-abc123` or a git SHA.
+  
+  To see available versions, run: `kamal app containers`
+</ParamField>
+
+## Examples
+
+### Find Available Versions
+
+First, list all container versions on your servers:
+
+```bash
+kamal app containers
+```
+
+Output:
+```
+192.168.1.10:
+  myapp-web-2024-03-11-abc123
+  myapp-web-2024-03-10-xyz789
+  myapp-web-2024-03-09-def456
+  
+192.168.1.11:
+  myapp-web-2024-03-11-abc123
+  myapp-web-2024-03-10-xyz789
+```
+
+### Rollback to Specific Version
+
+Roll back to the previous version:
+
+```bash
+kamal rollback 2024-03-10-xyz789
+```
+
+### Rollback by Git SHA
+
+If your versions use git SHAs:
+
+```bash
+kamal rollback a1b2c3d
+```
+
+### Check Current Version
+
+Verify the current running version:
+
+```bash
+kamal app version
+```
+
+## Expected Output
+
+<CodeGroup>
+```bash Successful Rollback
+Rolling back to version 2024-03-10-xyz789...
+
+  INFO [192.168.1.10] Checking for container version 2024-03-10-xyz789
+  INFO [192.168.1.11] Checking for container version 2024-03-10-xyz789
+  INFO Version found on all servers
+  
+Booting version 2024-03-10-xyz789...
+  INFO [192.168.1.10] Stopping myapp-web-2024-03-11-abc123
+  INFO [192.168.1.11] Stopping myapp-web-2024-03-11-abc123
+  INFO [192.168.1.10] Starting myapp-web-2024-03-10-xyz789
+  INFO [192.168.1.11] Starting myapp-web-2024-03-10-xyz789
+  INFO [192.168.1.10] Container is healthy
+  INFO [192.168.1.11] Container is healthy
+  
+Rollback complete!
+Finished in 8.2 seconds
+```
+
+```bash Version Not Found
+Rolling back to version 2024-03-05-old123...
+
+  INFO [192.168.1.10] Checking for container version 2024-03-05-old123
+  ERROR The app version '2024-03-05-old123' is not available as a container
+  
+Use 'kamal app containers' to see available versions
+```
+</CodeGroup>
+
+## Rollback Strategy
+
+### Quick Recovery
+
+Rollback is designed for fast recovery:
+
+- **No image build** - Uses existing container image
+- **No image push** - Image already on servers
+- **No image pull** - Container already exists locally
+- **Direct container start** - Immediately boots old version
+
+**Typical rollback time:** 5-15 seconds
+
+**Typical deploy time:** 60-90 seconds
+
+### Zero Downtime
+
+Like deployments, rollbacks maintain zero downtime:
+
+1. Old version containers are started
+2. Health checks pass
+3. Traffic is switched
+4. Current version is stopped
+
+## Version Management
+
+### Version Format
+
+Kamal versions typically follow this format:
+
+```
+<timestamp>-<git-sha>
+```
+
+Examples:
+- `2024-03-11-abc123d`
+- `20240311123045-a1b2c3d`
+
+### Checking Available Versions
+
+<CodeGroup>
+```bash List All Containers
+kamal app containers
+```
+
+```bash Check Specific Version
+kamal app exec "docker ps -a --filter name=myapp-web-2024-03-10"
+```
+
+```bash View Container Details
+kamal app details
+```
+</CodeGroup>
+
+## Hooks
+
+Rollback executes the same hooks as deploy:
+
+- **pre-deploy** - Before rollback (secrets available)
+- **post-deploy** - After successful rollback (includes runtime)
+
+<Note>
+Your hooks should handle both forward deployments and rollbacks gracefully.
+</Note>
+
+Example hook that works with rollbacks:
+
+```bash .kamal/hooks/post-deploy
+#!/bin/sh
+
+VERSION=$(cat .kamal-version 2>/dev/null || echo "unknown")
+RUNTIME=${KAMAL_RUNTIME:-0}
+
+if [ "$KAMAL_COMMAND" = "rollback" ]; then
+  curl -X POST https://api.example.com/rollbacks \
+    -d "version=$VERSION&runtime=$RUNTIME"
+else
+  curl -X POST https://api.example.com/deployments \
+    -d "version=$VERSION&runtime=$RUNTIME"
+fi
+```
+
+## Important Considerations
+
+<Warning>
+**Container Retention:** Rollback only works if the target version's container still exists on servers. Containers may be removed by:
+- `kamal prune all` - Removes old containers
+- `kamal remove` - Removes all containers
+- Manual cleanup
+</Warning>
+
+<Warning>
+**Database Migrations:** Rollback doesn't revert database migrations. If the current version ran migrations, rolling back the code may cause compatibility issues.
+</Warning>
+
+### Best Practices
+
+1. **Keep recent versions** - Don't prune too aggressively
+2. **Test rollback capability** - Verify rollback works in staging
+3. **Handle migrations carefully** - Use reversible or additive migrations
+4. **Monitor after rollback** - Ensure the old version works correctly
+
+## Related Commands
+
+- [`kamal app containers`](/commands/app) - List available versions
+- [`kamal app version`](/commands/app) - Show current version
+- [`kamal deploy`](/commands/deploy) - Deploy a new version
+- [`kamal app details`](/commands/app) - View container details
+
+## Troubleshooting
+
+### Version Not Available
+
+```bash
+# List available versions
+kamal app containers
+
+# If version was pruned, deploy it again
+kamal deploy
+```
+
+### Rollback Fails
+
+```bash
+# Check container status
+kamal app details
+
+# View logs for errors
+kamal app logs --since 10m
+
+# Check proxy status
+kamal proxy status
+```
+
+### Database Incompatibility
+
+If rolled-back code is incompatible with current database:
+
+```bash
+# Option 1: Roll forward (fix the issue and deploy)
+kamal deploy
+
+# Option 2: Manually revert migrations (dangerous)
+# SSH to server and run migration rollback
+ssh user@server
+cd /app && bundle exec rake db:rollback
+```
+
+### Health Checks Fail
+
+```bash
+# Check health endpoint
+kamal app exec "curl localhost:3000/up"
+
+# View detailed logs
+kamal app logs --timestamps
+
+# Force restart if needed
+kamal app boot --version 2024-03-10-xyz789
+```
+
+## Emergency Rollback
+
+For urgent production issues:
+
+```bash
+# 1. Find the last known good version
+kamal app containers
+
+# 2. Roll back immediately
+kamal rollback <last-good-version>
+
+# 3. Verify the rollback
+kamal app version
+
+# 4. Monitor the application
+kamal app logs --follow
+```

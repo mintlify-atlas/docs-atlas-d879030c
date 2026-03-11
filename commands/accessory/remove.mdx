@@ -1,0 +1,423 @@
+---
+title: kamal accessory remove
+description: Completely remove an accessory including container, image, and data
+---
+
+The `kamal accessory remove` command permanently removes an accessory from the host, including the container, image, and data directories. This operation cannot be undone.
+
+## Basic Usage
+
+```bash
+kamal accessory remove <NAME>
+```
+
+### Remove a Database
+
+```bash
+kamal accessory remove mysql
+```
+
+### Remove All Accessories
+
+```bash
+kamal accessory remove all
+```
+
+<Warning>
+This command permanently deletes all data, including volumes. Make sure you have backups before removing database accessories.
+</Warning>
+
+## Confirmation Required
+
+By default, remove requires confirmation:
+
+```bash
+kamal accessory remove mysql
+# Prompt: This will remove all containers, images and data directories for mysql. Are you sure? (y/N)
+```
+
+### Skip Confirmation
+
+```bash
+kamal accessory remove mysql --confirmed
+kamal accessory remove mysql -y
+```
+
+<Warning>
+Use `--confirmed` with caution, especially with `all` - there's no undo.
+</Warning>
+
+## What Remove Does
+
+The remove command executes these steps:
+
+<Steps>
+  <Step title="Stop Container">
+    Stops the running container gracefully.
+  </Step>
+  
+  <Step title="Remove Container">
+    Deletes the stopped container.
+  </Step>
+  
+  <Step title="Remove Image">
+    Deletes the Docker image from the host.
+  </Step>
+  
+  <Step title="Remove Service Directory">
+    Deletes all data directories and uploaded files.
+  </Step>
+</Steps>
+
+<Warning>
+All data is permanently deleted, including:
+- Container and its configuration
+- Docker image
+- All directories (database files, logs, etc.)
+- All uploaded files
+</Warning>
+
+## When to Use Remove
+
+### Decommission Service
+
+Permanently remove an accessory you no longer need:
+
+```bash
+# Removed from deploy.yml
+kamal accessory remove memcached
+```
+
+### Clean Up Test Accessories
+
+Remove accessories created during testing:
+
+```bash
+kamal accessory remove test-redis
+kamal accessory remove staging-mysql
+```
+
+### Free Disk Space
+
+Remove unused accessories to reclaim disk space:
+
+```bash
+kamal accessory remove old-postgres
+kamal accessory remove unused-mongo
+```
+
+### Before Major Updates
+
+Sometimes a clean slate is needed:
+
+```bash
+# Backup data first!
+mysqldump -h host myapp_production > backup.sql
+
+# Remove and recreate
+kamal accessory remove mysql
+kamal accessory boot mysql
+
+# Restore data
+mysql -h host myapp_production < backup.sql
+```
+
+## Examples
+
+### Remove Database Safely
+
+<Tabs>
+  <Tab title="1. Backup">
+    ```bash
+    # Create backup
+    ssh user@192.168.0.10 "docker exec myapp-mysql mysqldump -u root -p myapp_production" > backup.sql
+    
+    # Verify backup
+    ls -lh backup.sql
+    ```
+  </Tab>
+  
+  <Tab title="2. Remove">
+    ```bash
+    # Remove with confirmation
+    kamal accessory remove mysql
+    
+    # Confirm when prompted
+    # This will remove all containers, images and data directories for mysql. Are you sure? (y/N)
+    # y
+    ```
+  </Tab>
+  
+  <Tab title="3. Output">
+    ```text
+    INFO [abc123] Stopping mysql accessory on 192.168.0.10...
+    INFO [abc123] Removing mysql container on 192.168.0.10...
+    INFO [abc123] Removing mysql image on 192.168.0.10...
+    INFO [abc123] Removing service directory on 192.168.0.10...
+    INFO Removed mysql accessory
+    ```
+  </Tab>
+</Tabs>
+
+### Remove Multiple Accessories
+
+```bash
+# Remove one by one
+kamal accessory remove redis --confirmed
+kamal accessory remove memcached --confirmed
+
+# Or remove all at once
+kamal accessory remove all
+```
+
+<Note>
+When using `remove all`, each accessory removal will prompt for confirmation unless using `--confirmed`.
+</Note>
+
+### Remove and Recreate
+
+<CodeGroup>
+```bash Clean Slate
+# Remove existing
+kamal accessory remove postgres --confirmed
+
+# Update configuration
+vim deploy.yml
+
+# Create fresh
+kamal accessory boot postgres
+```
+
+```yaml Updated Config
+accessories:
+  postgres:
+    image: postgres:16  # Upgraded from 15
+    host: 192.168.0.10
+    directories:
+      - postgres-data:/var/lib/postgresql/data
+    options:
+      memory: 8g  # Increased from 4g
+```
+</CodeGroup>
+
+### Remove from Multiple Hosts
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+```
+
+```bash
+kamal accessory remove redis
+# Removes from both hosts
+```
+
+## Data Loss Warning
+
+### What Gets Deleted
+
+<Warning>
+The following are **permanently deleted**:
+
+- Database files
+- Configuration files
+- Log files
+- Cache data
+- All directories defined in configuration
+- All files uploaded to the accessory
+</Warning>
+
+### What Survives
+
+<Info>
+These are **not affected** by remove:
+
+- Configuration in `deploy.yml`
+- Secrets in `.kamal/secrets`
+- Backups stored elsewhere
+- Data on other hosts (if multi-host)
+</Info>
+
+## Before Removing
+
+<Steps>
+  <Step title="Backup Data">
+    Always backup critical data first:
+    
+    ```bash
+    # MySQL
+    ssh user@host "docker exec myapp-mysql mysqldump -u root -p myapp_production" > backup.sql
+    
+    # PostgreSQL
+    ssh user@host "docker exec myapp-postgres pg_dump myapp_production" > backup.sql
+    
+    # Redis
+    ssh user@host "docker exec myapp-redis redis-cli SAVE"
+    ssh user@host "docker cp myapp-redis:/data/dump.rdb ./redis-backup.rdb"
+    ```
+  </Step>
+  
+  <Step title="Stop Traffic">
+    Ensure nothing is using the accessory:
+    
+    ```bash
+    # Stop dependent applications
+    kamal app stop
+    
+    # Or update configuration to remove dependency
+    ```
+  </Step>
+  
+  <Step title="Verify Backup">
+    Test that your backup is valid:
+    
+    ```bash
+    # Test restore to different location
+    mysql -h test-host < backup.sql
+    ```
+  </Step>
+  
+  <Step title="Remove">
+    Now safe to remove:
+    
+    ```bash
+    kamal accessory remove mysql
+    ```
+  </Step>
+</Steps>
+
+## Implementation Details
+
+From `accessory.rb:226-238`:
+
+```ruby
+def remove(name)
+  confirming "This will remove all containers, images and data directories for #{name}. Are you sure?" do
+    with_lock do
+      if name == "all"
+        KAMAL.accessory_names.each { |accessory_name| remove_accessory(accessory_name) }
+      else
+        remove_accessory(name)
+      end
+    end
+  end
+end
+
+private
+  def remove_accessory(name)
+    stop(name)
+    remove_container(name)
+    remove_image(name)
+    remove_service_directory(name)
+  end
+```
+
+## Troubleshooting
+
+### Can't Remove Running Container
+
+```text
+Error: cannot remove container, container is running
+```
+
+**Solution**: Stop manually first:
+
+```bash
+kamal accessory stop mysql
+kamal accessory remove mysql
+```
+
+### Image Still in Use
+
+```text
+Error: image is referenced by other containers
+```
+
+**Solution**: Check for other containers:
+
+```bash
+ssh user@host "docker ps -a | grep mysql"
+
+# Remove other containers first
+ssh user@host "docker rm container-id"
+
+# Then remove accessory
+kamal accessory remove mysql
+```
+
+### Permission Denied on Directory Removal
+
+```text
+Error: cannot remove directory: Permission denied
+```
+
+**Solution**: May need manual cleanup:
+
+```bash
+ssh user@host "sudo rm -rf ~/myapp-mysql"
+```
+
+### Remove Fails Midway
+
+If remove fails partway through:
+
+```bash
+# Check what's left
+kamal accessory details mysql
+ssh user@host "docker images | grep mysql"
+ssh user@host "ls -la ~/myapp-mysql"
+
+# Clean up manually
+ssh user@host "docker stop myapp-mysql || true"
+ssh user@host "docker rm myapp-mysql || true"
+ssh user@host "docker rmi mysql:8.0 || true"
+ssh user@host "rm -rf ~/myapp-mysql || true"
+```
+
+## Recovery After Removal
+
+### Restore from Backup
+
+```bash
+# Recreate accessory
+kamal accessory boot mysql
+
+# Wait for it to be ready
+kamal accessory logs mysql --follow
+
+# Restore data
+ssh user@host "docker exec -i myapp-mysql mysql -u root -p myapp_production" < backup.sql
+
+# Verify
+kamal accessory details mysql
+```
+
+### Start Fresh
+
+```bash
+# Remove old configuration from deploy.yml
+vim deploy.yml
+
+# Add new accessory configuration
+# ...
+
+# Boot new accessory
+kamal accessory boot new-mysql
+```
+
+## Related Commands
+
+- [`kamal accessory stop`](/commands/accessory/stop) - Stop without removing
+- [`kamal accessory boot`](/commands/accessory/boot) - Create and start accessory
+- [`kamal accessory reboot`](/commands/accessory/reboot) - Recreate without removing data
+- [`kamal accessory details`](/commands/accessory/details) - Check what exists
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Accessories Setup Guide](/guides/accessories-setup) - Setup guide
+- [Secrets Management](/guides/secrets-management) - Managing secrets

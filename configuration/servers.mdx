@@ -1,0 +1,358 @@
+---
+title: Server Configuration
+description: Configure deployment servers, roles, and host targeting
+---
+
+Servers are the hosts where your application containers will run. Kamal supports simple single-role deployments or complex multi-role setups.
+
+## Simple Server Configuration
+
+For basic deployments where all servers run the same application, specify a list of IP addresses or hostnames:
+
+```yaml
+servers:
+  - 192.168.0.1
+  - 192.168.0.2
+  - 192.168.0.3
+```
+
+This implicitly creates a `web` role containing all servers.
+
+## Tagged Servers
+
+Tag servers to apply different environment variables (see [Environment Configuration](/configuration/environment)):
+
+```yaml
+servers:
+  - 192.168.0.1
+  - 192.168.0.2: experiments
+  - 192.168.0.3: [experiments, monitoring]
+```
+
+Tags are used with the `env.tags` configuration to inject specific environment variables.
+
+## Role-Based Configuration
+
+For complex deployments, organize servers into roles with different configurations:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+  workers:
+    hosts:
+      - 192.168.0.3
+      - 192.168.0.4
+    cmd: bin/jobs
+  ```
+
+### Primary Role
+
+Kamal expects a `web` role by default. This is the primary role where certain operations are executed first. Change it with:
+
+```yaml
+primary_role: workers
+
+servers:
+  workers:
+    - 192.168.0.1
+```
+
+## Role Configuration Options
+
+Roles can be configured with just a list of hosts or with additional options:
+
+<Tabs>
+  <Tab title="Simple Role">
+    ```yaml
+    servers:
+      web:
+        - 192.168.0.1
+        - 192.168.0.2: tag1
+    ```
+  </Tab>
+  
+  <Tab title="Advanced Role">
+    ```yaml
+    servers:
+      workers:
+        hosts:
+          - 192.168.0.3
+          - 192.168.0.4: high_memory
+        cmd: bin/jobs
+        options:
+          memory: 2g
+          cpus: 4
+        labels:
+          role: background-worker
+        env:
+          clear:
+            QUEUE: default
+        proxy: false
+    ```
+  </Tab>
+</Tabs>
+
+### Available Role Options
+
+<ParamField path="hosts" type="array" required>
+  List of IP addresses or hostnames. Can include tags.
+  
+  ```yaml
+  hosts:
+    - 192.168.0.1
+    - 192.168.0.2: tag1
+    - 192.168.0.3: [tag1, tag2]
+  ```
+</ParamField>
+
+<ParamField path="cmd" type="string">
+  Custom command to run in the container instead of the default.
+  
+  ```yaml
+  cmd: bundle exec sidekiq
+  ```
+</ParamField>
+
+<ParamField path="options" type="object">
+  Additional Docker run options passed as `--<name> <value>`.
+  
+  ```yaml
+  options:
+    restart: unless-stopped
+    memory: 2g
+    cpus: 4
+    cap-add: SYS_PTRACE
+  ```
+</ParamField>
+
+<ParamField path="labels" type="object">
+  Additional Docker labels for containers in this role.
+  
+  ```yaml
+  labels:
+    monitoring: enabled
+    team: platform
+  ```
+</ParamField>
+
+<ParamField path="env" type="object">
+  Role-specific environment variables. See [Environment Configuration](/configuration/environment).
+  
+  ```yaml
+  env:
+    clear:
+      ROLE: worker
+    secret:
+      - WORKER_SECRET_KEY
+  ```
+</ParamField>
+
+<ParamField path="logging" type="object">
+  Docker logging configuration for this role.
+  
+  ```yaml
+  logging:
+    driver: json-file
+    options:
+      max-size: 100m
+      max-file: 3
+  ```
+</ParamField>
+
+<ParamField path="proxy" type="boolean | object">
+  Proxy configuration for this role.
+  
+  - For primary role: `false` disables the proxy (enabled by default)
+  - For other roles: `true` enables with default config, or provide custom config
+  
+  ```yaml
+  # Disable proxy on primary role
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy: false
+  
+  # Enable proxy on non-primary role
+  api:
+    hosts:
+      - 192.168.0.2
+    proxy:
+      host: api.example.com
+      app_port: 3000
+  ```
+  
+  See [Proxy Configuration](/configuration/proxy) for all options.
+</ParamField>
+
+<ParamField path="asset_path" type="string">
+  Path to assets for bridging across deployments.
+  
+  ```yaml
+  asset_path: /app/public/assets
+  # With mount options
+  asset_path: /app/public/assets:ro
+  ```
+</ParamField>
+
+## Host Targeting
+
+When running Kamal commands, you can target specific roles or hosts:
+
+```bash
+# Deploy only to web role
+kamal deploy -r web
+
+# Deploy to specific hosts
+kamal deploy -h 192.168.0.1,192.168.0.2
+
+# Execute on primary host only
+kamal app exec -p 'rails console'
+```
+
+## Container Naming
+
+Containers are named based on the service, role, destination, and version:
+
+```
+<service>-<role>-<destination>-<version>
+```
+
+For example:
+- Service: `my-app`
+- Role: `workers`
+- Destination: `staging`
+- Version: `abc123`
+
+Results in: `my-app-workers-staging-abc123`
+
+## Empty Roles
+
+By default, Kamal requires all roles to have at least one server. To allow empty roles:
+
+```yaml
+allow_empty_roles: true
+
+servers:
+  web:
+    - 192.168.0.1
+  workers:
+    hosts: []  # This would normally fail
+```
+
+<Warning>
+The primary role must always have at least one server, even with `allow_empty_roles: true`.
+</Warning>
+
+## Multiple Hosts with Tags
+
+Combine tags with role-based configuration:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1: primary
+      - 192.168.0.2: [replica, monitoring]
+      - 192.168.0.3: replica
+
+env:
+  tags:
+    primary:
+      clear:
+        READ_ONLY: false
+    replica:
+      clear:
+        READ_ONLY: true
+    monitoring:
+      secret:
+        - MONITORING_TOKEN
+```
+
+## Examples
+
+<Accordion title="Web + Worker Configuration">
+```yaml
+service: my-app
+image: my-user/my-app
+
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    options:
+      memory: 1g
+  
+  workers:
+    hosts:
+      - 192.168.0.3
+      - 192.168.0.4
+    cmd: bundle exec sidekiq
+    options:
+      memory: 2g
+    proxy: false
+    env:
+      clear:
+        SIDEKIQ_CONCURRENCY: 10
+```
+</Accordion>
+
+<Accordion title="Multi-Region Deployment">
+```yaml
+service: my-app
+image: my-user/my-app
+
+servers:
+  web:
+    hosts:
+      - us-east-1.example.com: us_east
+      - us-west-1.example.com: us_west
+      - eu-west-1.example.com: eu_west
+
+env:
+  tags:
+    us_east:
+      clear:
+        REGION: us-east-1
+        DATABASE_URL: postgres://us-east-db/...
+    us_west:
+      clear:
+        REGION: us-west-1
+        DATABASE_URL: postgres://us-west-db/...
+    eu_west:
+      clear:
+        REGION: eu-west-1
+        DATABASE_URL: postgres://eu-west-db/...
+```
+</Accordion>
+
+<Accordion title="API + Background Jobs">
+```yaml
+servers:
+  api:
+    hosts:
+      - api-1.example.com
+      - api-2.example.com
+    proxy:
+      host: api.example.com
+      ssl: true
+      app_port: 3000
+  
+  jobs:
+    hosts:
+      - jobs-1.example.com
+    cmd: rake jobs:work
+    proxy: false
+    options:
+      memory: 4g
+      cpus: 8
+```
+</Accordion>
+
+## Related Configuration
+
+- [Environment Variables](/configuration/environment) - Configure env vars for tagged hosts
+- [Proxy Configuration](/configuration/proxy) - Configure the proxy for roles
+- [SSH Configuration](/configuration/ssh) - Configure SSH connection settings

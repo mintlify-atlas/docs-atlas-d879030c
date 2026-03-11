@@ -1,0 +1,366 @@
+---
+title: kamal app logs
+description: View and follow application logs from containers
+---
+
+## Overview
+
+The `kamal app logs` command displays logs from your app containers. It supports filtering, following logs in real-time, searching with grep, and viewing logs from specific time ranges.
+
+## Usage
+
+```bash
+kamal app logs [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--since" type="string">
+  Show log lines since a timestamp or relative time.
+  
+  **Alias:** `-s`
+  
+  **Examples:**
+  - Absolute: `2026-03-11T13:23:37Z`
+  - Relative: `42m` (42 minutes), `2h` (2 hours), `3d` (3 days)
+  
+  ```bash
+  kamal app logs --since 30m
+  kamal app logs --since 2026-03-11T10:00:00Z
+  ```
+</ParamField>
+
+<ParamField path="--lines" type="number">
+  Number of lines to show from each server.
+  
+  **Alias:** `-n`
+  
+  **Default:** 100 lines (or 10 when following)
+  
+  ```bash
+  kamal app logs --lines 500
+  kamal app logs -n 50
+  ```
+</ParamField>
+
+<ParamField path="--grep" type="string">
+  Show only lines matching the grep pattern. Useful for filtering by request ID, error type, or specific text.
+  
+  **Alias:** `-g`
+  
+  ```bash
+  kamal app logs --grep "ERROR"
+  kamal app logs --grep "request_id=abc123"
+  kamal app logs -g "ActiveRecord"
+  ```
+</ParamField>
+
+<ParamField path="--grep-options" type="string">
+  Additional options to pass to grep for advanced filtering.
+  
+  ```bash
+  kamal app logs --grep "error" --grep-options "-i"  # Case-insensitive
+  kamal app logs --grep "ERROR|FATAL" --grep-options "-E"  # Extended regex
+  ```
+</ParamField>
+
+<ParamField path="--follow" type="boolean">
+  Follow log output in real-time from the primary server (or host specified with `--hosts`).
+  
+  **Alias:** `-f`
+  
+  ```bash
+  kamal app logs --follow
+  kamal app logs -f --hosts web2.example.com
+  ```
+</ParamField>
+
+<ParamField path="--skip-timestamps" type="boolean">
+  Don't append timestamps to log output.
+  
+  **Alias:** `-T`
+  
+  ```bash
+  kamal app logs --skip-timestamps
+  ```
+</ParamField>
+
+<ParamField path="--container-id" type="string">
+  Fetch logs from a specific Docker container ID instead of the current running container.
+  
+  ```bash
+  kamal app logs --container-id a1b2c3d4e5f6
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Show logs from specific hosts (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app logs --hosts web1.example.com
+  kamal app logs --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Show logs from specific roles (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app logs --roles web
+  kamal app logs --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal output without host labels
+  
+  ```bash
+  kamal app logs --quiet
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app logs --verbose
+  ```
+</ParamField>
+
+## Default Behavior
+
+When you run `kamal app logs` without options:
+
+- Shows **100 lines** from all app hosts
+- Includes **timestamps**
+- Fetches logs from **all roles**
+- Shows **static snapshot** (not following)
+
+## Examples
+
+<CodeGroup>
+
+```bash Basic logs
+# Show last 100 lines from all hosts
+kamal app logs
+```
+
+```bash Recent logs
+# Show logs from last 30 minutes
+kamal app logs --since 30m
+```
+
+```bash Follow logs
+# Follow logs in real-time from primary host
+kamal app logs --follow
+kamal app logs -f
+```
+
+```bash Search logs
+# Find all ERROR lines
+kamal app logs --grep "ERROR"
+
+# Find specific request ID
+kamal app logs --grep "request_id=abc-123"
+```
+
+```bash Combined filters
+# Errors from last hour, 50 lines
+kamal app logs --since 1h --grep "ERROR" --lines 50
+```
+
+```bash Specific role
+# Logs from worker role only
+kamal app logs --roles worker
+```
+
+```bash Specific host
+# Follow logs from specific host
+kamal app logs --follow --hosts web2.example.com
+```
+
+```bash Case-insensitive search
+# Search case-insensitively
+kamal app logs --grep "error" --grep-options "-i"
+```
+
+```bash More lines
+# Show last 500 lines
+kamal app logs --lines 500
+```
+
+```bash Without timestamps
+# Clean output without timestamps
+kamal app logs --skip-timestamps
+```
+
+```bash Specific container
+# Logs from specific container ID
+kamal app logs --container-id a1b2c3d4e5f6
+```
+
+</CodeGroup>
+
+## Common Use Cases
+
+<Tabs>
+  <Tab title="Debugging Errors">
+    Find and investigate errors in your application:
+    
+    ```bash
+    # Recent errors
+    kamal app logs --since 1h --grep "ERROR"
+    
+    # All errors with more context
+    kamal app logs --grep "ERROR" --lines 1000
+    
+    # Case-insensitive error search
+    kamal app logs --grep "error" --grep-options "-i"
+    ```
+  </Tab>
+  
+  <Tab title="Monitoring Deployments">
+    Watch logs during and after deployment:
+    
+    ```bash
+    # Follow logs during deployment
+    kamal app logs --follow
+    
+    # Check logs from specific role
+    kamal app logs --roles web --since 5m
+    ```
+  </Tab>
+  
+  <Tab title="Tracking Requests">
+    Follow specific requests through your system:
+    
+    ```bash
+    # Find all logs for a request ID
+    kamal app logs --grep "request_id=abc-123-def"
+    
+    # Follow logs and filter
+    kamal app logs --follow --grep "request_id=abc-123"
+    ```
+  </Tab>
+  
+  <Tab title="Performance Issues">
+    Investigate slow requests or timeouts:
+    
+    ```bash
+    # Find timeout errors
+    kamal app logs --grep "timeout" --since 2h
+    
+    # Look for slow queries
+    kamal app logs --grep "Slow query" --lines 200
+    ```
+  </Tab>
+  
+  <Tab title="Background Jobs">
+    Monitor worker processes:
+    
+    ```bash
+    # Worker logs only
+    kamal app logs --roles worker --follow
+    
+    # Failed jobs
+    kamal app logs --roles worker --grep "FAIL"
+    ```
+  </Tab>
+</Tabs>
+
+## Following Logs
+
+When using `--follow` mode:
+
+- Logs are streamed in **real-time**
+- Only shows logs from the **primary host** (or the host specified with `--hosts`)
+- Defaults to **10 lines** of history unless `--lines` is specified
+- Press **Ctrl+C** to stop following
+
+```bash
+# Follow with more history
+kamal app logs --follow --lines 50
+
+# Follow from specific host
+kamal app logs --follow --hosts web2.example.com
+
+# Follow and filter
+kamal app logs --follow --grep "ERROR"
+```
+
+## Grep Patterns
+
+The `--grep` option supports standard grep patterns:
+
+```bash
+# Simple text match
+kamal app logs --grep "User logged in"
+
+# Multiple terms (with extended regex)
+kamal app logs --grep "ERROR|FATAL" --grep-options "-E"
+
+# Case-insensitive
+kamal app logs --grep "error" --grep-options "-i"
+
+# Exclude lines (inverse match)
+kamal app logs --grep "health_check" --grep-options "-v"
+
+# Word boundary
+kamal app logs --grep "\buser\b" --grep-options "-w"
+```
+
+## Timestamps
+
+By default, logs include timestamps. You can:
+
+**View with timestamps** (default):
+```bash
+kamal app logs
+```
+
+**Skip timestamps** for cleaner output:
+```bash
+kamal app logs --skip-timestamps
+```
+
+<Tip>
+  Timestamps are useful for correlating events across hosts, but you can skip them if you're piping output to another tool or need cleaner formatting.
+</Tip>
+
+## Performance Considerations
+
+<Note>
+  When querying logs from many hosts or large time ranges, the command may take time to complete. Use `--hosts` or `--roles` to limit the scope.
+</Note>
+
+**Optimize log queries:**
+
+```bash
+# Faster: Limit to specific host
+kamal app logs --hosts web1.example.com --since 1h
+
+# Faster: Limit to specific role
+kamal app logs --roles web --since 30m
+
+# Slower: All hosts, large time range
+kamal app logs --since 24h
+```
+
+## Error Handling
+
+If no logs are found, you'll see:
+
+```
+Nothing found
+```
+
+This can happen if:
+- The container hasn't logged anything in the specified time range
+- The grep pattern doesn't match any lines
+- The container ID doesn't exist
+
+## Related Commands
+
+- [`kamal app exec`](/commands/app/exec) - Execute commands in containers
+- [`kamal app details`](/commands/app/details) - View container details
+- [`kamal app containers`](/commands/app/containers) - List running containers

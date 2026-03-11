@@ -1,0 +1,513 @@
+---
+title: Common Issues
+description: Solutions to frequently encountered problems when deploying with Kamal
+---
+
+This guide covers the most common issues you might encounter when using Kamal and their solutions.
+
+## Connection Issues
+
+### SSH Connection Failures
+
+<Accordion title="Error: Connection refused or timeout">
+  **Problem:** Unable to connect to remote servers via SSH.
+
+  **Solutions:**
+  
+  1. Verify SSH access manually:
+     ```bash
+     ssh user@your-server-ip
+     ```
+
+  2. Check your SSH configuration in `config/deploy.yml`:
+     ```yaml
+     ssh:
+       user: deploy
+       port: 22
+       keepalive: true
+       keepalive_interval: 30
+     ```
+
+  3. Ensure your SSH key is added to the server:
+     ```bash
+     ssh-copy-id user@your-server-ip
+     ```
+
+  4. Test with verbose output to see connection details:
+     ```bash
+     kamal deploy --verbose
+     ```
+</Accordion>
+
+<Accordion title="Error: Permission denied (publickey)">
+  **Problem:** SSH authentication is failing.
+
+  **Solutions:**
+  
+  1. Verify your SSH key is loaded:
+     ```bash
+     ssh-add -l
+     ```
+
+  2. Add your SSH key if needed:
+     ```bash
+     ssh-add ~/.ssh/id_rsa
+     ```
+
+  3. Specify the key explicitly in your SSH config (`~/.ssh/config`):
+     ```
+     Host your-server-ip
+       IdentityFile ~/.ssh/your-key
+       User deploy
+     ```
+</Accordion>
+
+### Network Configuration
+
+<Accordion title="Docker network already exists error">
+  **Problem:** Error creating Docker network during deployment.
+
+  ```
+  Error: network with name kamal already exists
+  ```
+
+  **Solution:** This is usually handled automatically by Kamal. The error is caught and ignored in `lib/kamal/cli/proxy.rb:8`. If you see persistent issues:
+  
+  ```bash
+  # Remove the existing network manually
+  kamal app exec "docker network rm kamal"
+  ```
+</Accordion>
+
+## Build Failures
+
+### Docker Build Issues
+
+<Accordion title="Docker not installed locally">
+  **Problem:** `DependencyError: Docker is not installed locally`
+
+  **Solutions:**
+  
+  1. Install Docker Desktop (macOS/Windows):
+     - Download from [docker.com](https://www.docker.com/products/docker-desktop)
+
+  2. Install Docker Engine (Linux):
+     ```bash
+     curl -fsSL https://get.docker.com -o get-docker.sh
+     sudo sh get-docker.sh
+     ```
+
+  3. Verify installation:
+     ```bash
+     docker --version
+     docker buildx version
+     ```
+</Accordion>
+
+<Accordion title="Docker buildx plugin not installed">
+  **Problem:** `DependencyError: Docker buildx plugin is not installed locally`
+
+  **Solution:**
+  
+  Docker buildx should come with Docker Desktop. If missing:
+  
+  ```bash
+  # Install buildx manually
+  docker buildx install
+  
+  # Verify installation
+  docker buildx version
+  ```
+</Accordion>
+
+<Accordion title="Builder context not found">
+  **Problem:** Error about missing or incompatible builder context.
+
+  ```
+  Error: context not found or no compatible builder
+  ```
+
+  **Solutions:**
+  
+  1. Create a new builder:
+     ```bash
+     kamal build create
+     ```
+
+  2. Remove old builder and recreate:
+     ```bash
+     kamal build remove
+     kamal build create
+     ```
+
+  3. Inspect current builder:
+     ```bash
+     kamal build details
+     ```
+</Accordion>
+
+<Accordion title="Build fails with uncommitted changes warning">
+  **Problem:** Build warnings about uncommitted files when using git clone strategy.
+
+  **Solution:**
+  
+  This is a warning, not an error. If using `git_clone: true` in your builder config:
+  
+  ```yaml
+  builder:
+    git_clone: true
+  ```
+  
+  Uncommitted changes are ignored. Either:
+  - Commit your changes
+  - Remove `git_clone: true` to build with all local files
+  - Continue despite the warning (files won't be included)
+</Accordion>
+
+### Registry Authentication
+
+<Accordion title="Registry login failures">
+  **Problem:** Cannot authenticate with container registry.
+
+  **Solutions:**
+  
+  1. Verify registry credentials in `.kamal/secrets`:
+     ```bash
+     KAMAL_REGISTRY_USERNAME=your-username
+     KAMAL_REGISTRY_PASSWORD=your-password
+     ```
+
+  2. For Docker Hub, use access tokens instead of passwords:
+     - Create at https://hub.docker.com/settings/security
+
+  3. Test registry login manually:
+     ```bash
+     kamal registry login
+     ```
+
+  4. For GitHub Container Registry:
+     ```bash
+     KAMAL_REGISTRY_USERNAME=your-github-username
+     KAMAL_REGISTRY_PASSWORD=your-github-pat
+     ```
+</Accordion>
+
+## Deploy Lock Issues
+
+<Accordion title="Deploy lock already in place">
+  **Problem:** `LockError: Deploy lock found`
+
+  ```
+  Deploy lock already in place!
+  ```
+
+  **This usually means:**
+  - Another deployment is in progress
+  - A previous deployment failed without releasing the lock
+
+  **Solutions:**
+  
+  1. Check lock status:
+     ```bash
+     kamal lock status
+     ```
+
+  2. If no deployment is running, release the lock:
+     ```bash
+     kamal lock release
+     ```
+
+  3. View lock details to see who acquired it:
+     ```bash
+     kamal lock status
+     ```
+     
+     Output shows the lock holder and version.
+</Accordion>
+
+<Warning>
+  Never force-release a lock while another deployment is actually running. This can cause race conditions and deployment corruption.
+</Warning>
+
+## Container Health Issues
+
+<Accordion title="Container not ready after timeout">
+  **Problem:** `Healthcheck::Error: container not ready after X seconds`
+
+  **Common causes:**
+  - App takes longer to start than the configured timeout
+  - App is crashing on startup
+  - Health check endpoint is not responding
+
+  **Solutions:**
+  
+  1. Increase deploy timeout in `config/deploy.yml`:
+     ```yaml
+     deploy_timeout: 300  # Increase from default
+     ```
+
+  2. Add readiness delay for slow-starting apps:
+     ```yaml
+     readiness_delay: 10  # Wait 10 seconds after container starts
+     ```
+
+  3. Check container logs for startup errors:
+     ```bash
+     kamal app logs --since 5m
+     ```
+
+  4. Verify health check configuration:
+     ```yaml
+     healthcheck:
+       path: /up
+       port: 3000
+       interval: 10s
+       timeout: 5s
+     ```
+</Accordion>
+
+<Accordion title="Container endpoint not found">
+  **Problem:** `BootError: Failed to get endpoint, did the container boot?`
+
+  **Solutions:**
+  
+  1. Check if container is actually running:
+     ```bash
+     kamal app containers
+     ```
+
+  2. Examine container logs:
+     ```bash
+     kamal app logs --lines 100
+     ```
+
+  3. Verify the app binds to `0.0.0.0` not `localhost`:
+     ```ruby
+     # Rails: config/puma.rb
+     bind "tcp://0.0.0.0:3000"
+     ```
+
+  4. Check port configuration matches:
+     ```yaml
+     servers:
+       web:
+         port: 3000  # Must match app's bind port
+     ```
+</Accordion>
+
+## Proxy Issues
+
+<Accordion title="kamal-proxy version too old">
+  **Problem:** Error about outdated kamal-proxy version.
+
+  ```
+  kamal-proxy version X is too old, run `kamal proxy reboot`
+  ```
+
+  **Solution:**
+  
+  ```bash
+  kamal proxy reboot
+  ```
+  
+  This will cause a brief outage while the proxy restarts.
+</Accordion>
+
+<Accordion title="Cannot remove proxy - other apps installed">
+  **Problem:** Error when trying to remove proxy with multiple apps.
+
+  ```
+  The are other applications installed on [host]
+  ```
+
+  **Solution:**
+  
+  If you're sure you want to remove the proxy:
+  
+  ```bash
+  kamal proxy remove --force
+  ```
+  
+  <Warning>
+    This will affect all applications using the proxy on this server.
+  </Warning>
+</Accordion>
+
+## Hook Failures
+
+<Accordion title="Hook execution failed">
+  **Problem:** `HookError: Hook 'pre-deploy' failed`
+
+  **Solutions:**
+  
+  1. Check hook script exists and is executable:
+     ```bash
+     ls -la .kamal/hooks/
+     chmod +x .kamal/hooks/pre-deploy
+     ```
+
+  2. Test hook manually:
+     ```bash
+     .kamal/hooks/pre-deploy
+     ```
+
+  3. Skip hooks temporarily to debug:
+     ```bash
+     kamal deploy --skip-hooks
+     ```
+
+  4. View hook output with verbose mode:
+     ```bash
+     kamal deploy --verbose
+     ```
+</Accordion>
+
+## Rollback Issues
+
+<Accordion title="Version not available for rollback">
+  **Problem:** Cannot rollback to specified version.
+
+  ```
+  The app version 'X' is not available as a container
+  ```
+
+  **Solutions:**
+  
+  1. List available versions:
+     ```bash
+     kamal app containers
+     ```
+
+  2. Check image versions on servers:
+     ```bash
+     kamal app images
+     ```
+
+  3. The version must exist as a container on the server. Old containers may have been pruned.
+</Accordion>
+
+## Environment Variable Issues
+
+<Accordion title="Secrets not loading">
+  **Problem:** Environment variables are empty or undefined in the application.
+
+  **Solutions:**
+  
+  1. Verify secrets file exists:
+     ```bash
+     cat .kamal/secrets
+     ```
+
+  2. Check secrets are exported:
+     ```bash
+     # .kamal/secrets must export variables
+     export RAILS_MASTER_KEY=abc123...
+     ```
+
+  3. Test secrets loading locally:
+     ```bash
+     source .kamal/secrets
+     echo $RAILS_MASTER_KEY
+     ```
+
+  4. Ensure `.kamal/secrets` is executable:
+     ```bash
+     chmod +x .kamal/secrets
+     ```
+</Accordion>
+
+## Configuration Errors
+
+<Accordion title="Config file not found">
+  **Problem:** Kamal cannot find `config/deploy.yml`.
+
+  **Solutions:**
+  
+  1. Verify file exists:
+     ```bash
+     ls config/deploy.yml
+     ```
+
+  2. Initialize if missing:
+     ```bash
+     kamal init
+     ```
+
+  3. Specify custom config location:
+     ```bash
+     kamal deploy --config-file path/to/deploy.yml
+     ```
+</Accordion>
+
+<Accordion title="Validation errors in config">
+  **Problem:** Configuration validation fails.
+
+  **Solution:**
+  
+  Use the docs command to see valid configuration options:
+  
+  ```bash
+  # Show all configuration docs
+  kamal docs
+  
+  # Show specific section docs
+  kamal docs builder
+  kamal docs servers
+  kamal docs proxy
+  ```
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="Slow deployments">
+  **Problem:** Deployments take too long.
+
+  **Solutions:**
+  
+  1. Use build cache:
+     ```bash
+     # Don't use --no-cache unless necessary
+     kamal deploy
+     ```
+
+  2. Enable parallel role deployment:
+     ```yaml
+     boot:
+       parallel_roles: true
+     ```
+
+  3. Optimize Docker image size:
+     - Use multi-stage builds
+     - Remove unnecessary dependencies
+     - Use `.dockerignore`
+
+  4. Use a remote builder closer to your registry:
+     ```yaml
+     builder:
+       remote: ssh://builder-host
+     ```
+</Accordion>
+
+<Tip>
+  Always run Kamal commands with `--verbose` flag when troubleshooting to see detailed execution logs.
+</Tip>
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. Check the [GitHub Issues](https://github.com/basecamp/kamal/issues) for similar problems
+2. Run with verbose output and examine logs:
+   ```bash
+   kamal deploy --verbose
+   ```
+3. Collect diagnostic information:
+   ```bash
+   kamal app details
+   kamal proxy details
+   kamal app logs --lines 200
+   ```
+4. Review the audit log:
+   ```bash
+   kamal audit
+   ```

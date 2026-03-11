@@ -1,0 +1,321 @@
+---
+title: kamal remove
+description: Remove all Kamal-managed containers, images, and resources from servers
+---
+
+The `kamal remove` command removes all Kamal-managed resources from your servers, including application containers, kamal-proxy, accessories, and registry sessions.
+
+## Usage
+
+```bash
+kamal remove [OPTIONS]
+```
+
+## Description
+
+The remove command performs a complete teardown of your Kamal deployment:
+
+1. **Remove application** - Stops and removes all app containers
+2. **Remove proxy** - Stops and removes kamal-proxy
+3. **Remove accessories** - Stops and removes databases, Redis, etc.
+4. **Remove registry session** - Logs out from Docker registry
+
+<Warning>
+**DESTRUCTIVE OPERATION:** This command removes all containers and will cause downtime. Use with extreme caution, especially in production environments.
+</Warning>
+
+## Options
+
+<ParamField path="--confirmed" type="boolean" default={false}>
+  Skip the confirmation prompt and proceed directly with removal.
+  
+  **Alias:** `-y`
+  
+  <Warning>Use this flag carefully - there is no undo!</Warning>
+</ParamField>
+
+## Examples
+
+### Interactive Removal
+
+Remove with confirmation prompt:
+
+```bash
+kamal remove
+```
+
+You'll be prompted:
+```
+This will remove all containers and images. Are you sure? (y/N)
+```
+
+### Non-interactive Removal
+
+Skip confirmation (useful in scripts):
+
+```bash
+kamal remove --confirmed
+```
+
+```bash
+kamal remove -y
+```
+
+## Expected Output
+
+<CodeGroup>
+```bash Interactive Removal
+This will remove all containers and images. Are you sure? (y/N) y
+
+Removing application...
+  INFO [192.168.1.10] Stopping myapp-web-2024-03-11-abc123
+  INFO [192.168.1.11] Stopping myapp-web-2024-03-11-abc123
+  INFO [192.168.1.10] Removing container myapp-web-2024-03-11-abc123
+  INFO [192.168.1.11] Removing container myapp-web-2024-03-11-abc123
+  INFO [192.168.1.10] Removing image myapp:2024-03-11-abc123
+  INFO [192.168.1.11] Removing image myapp:2024-03-11-abc123
+
+Removing kamal-proxy...
+  INFO [192.168.1.10] Stopping kamal-proxy
+  INFO [192.168.1.11] Stopping kamal-proxy
+  INFO [192.168.1.10] Removing kamal-proxy container
+  INFO [192.168.1.11] Removing kamal-proxy container
+
+Removing accessories...
+  INFO [192.168.1.10] Stopping redis
+  INFO [192.168.1.10] Removing redis container
+  INFO [192.168.1.10] Removing redis volume
+
+Removing registry session...
+  INFO [192.168.1.10] Logging out from registry
+  INFO [192.168.1.11] Logging out from registry
+
+All resources removed successfully
+Finished in 12.4 seconds
+```
+
+```bash With --confirmed Flag
+Removing application...
+  INFO Stopping all app containers
+  INFO Removing all app containers and images
+  
+Removing kamal-proxy...
+  INFO kamal-proxy removed
+  
+Removing accessories...
+  INFO All accessories removed
+  
+Removing registry session...
+  INFO Logged out from registry
+  
+Finished in 9.7 seconds
+```
+</CodeGroup>
+
+## What Gets Removed
+
+### Application Resources
+- All app containers (running and stopped)
+- All app Docker images
+- Application environment variables
+- Application volumes (if any)
+
+### Kamal-proxy
+- kamal-proxy container
+- Proxy configuration
+- SSL certificates (if managed by Kamal)
+
+### Accessories
+- Database containers (PostgreSQL, MySQL, etc.)
+- Redis containers
+- Any other configured accessories
+- Associated volumes
+
+### Registry
+- Docker registry authentication session
+- Cached registry credentials
+
+## What Doesn't Get Removed
+
+<Note>
+These remain on your servers after `kamal remove`:
+</Note>
+
+- **Docker Engine** - The Docker installation itself
+- **Docker networks** - Custom networks remain
+- **Persistent volumes** - Data volumes (unless explicitly configured)
+- **System packages** - Installed system dependencies
+- **Configuration files** - Your local config/deploy.yml
+
+## Use Cases
+
+### When to Use Remove
+
+✓ **Decommissioning application** - Taking down a staging environment
+
+✓ **Clean slate** - Starting fresh after configuration changes
+
+✓ **Server repurposing** - Using servers for a different application
+
+✓ **Testing setup** - Testing your setup process from scratch
+
+### When NOT to Use Remove
+
+✗ **Production deployments** - Use `kamal deploy` or `kamal rollback` instead
+
+✗ **Quick fixes** - Use `kamal app stop` and `kamal app start`
+
+✗ **Updating code** - Use `kamal deploy` or `kamal redeploy`
+
+✗ **Configuration changes** - Most config changes don't require full removal
+
+## Recovery After Remove
+
+To redeploy after removal:
+
+```bash
+# Full setup (recommended)
+kamal setup
+
+# Or deploy directly if servers are still bootstrapped
+kamal deploy
+```
+
+## Safety Features
+
+### Confirmation Prompt
+
+By default, `kamal remove` asks for confirmation:
+
+```bash
+This will remove all containers and images. Are you sure? (y/N)
+```
+
+This prevents accidental removals in production.
+
+### Deploy Lock
+
+<Note>
+Remove acquires a deploy lock to prevent concurrent operations during removal.
+</Note>
+
+If a deployment is in progress:
+
+```bash
+# Check lock status
+kamal lock status
+
+# Wait for deployment to finish before removing
+```
+
+## Selective Removal
+
+For more granular control, use specific remove commands:
+
+<CodeGroup>
+```bash Remove App Only
+kamal app remove
+```
+
+```bash Remove Proxy Only
+kamal proxy remove
+```
+
+```bash Remove Specific Accessory
+kamal accessory remove redis
+```
+
+```bash Remove All Accessories
+kamal accessory remove all
+```
+</CodeGroup>
+
+## Related Commands
+
+- [`kamal app remove`](/commands/app) - Remove application only
+- [`kamal proxy remove`](/commands/proxy) - Remove kamal-proxy only
+- [`kamal accessory remove`](/commands/accessory) - Remove accessories
+- [`kamal prune all`](/commands/prune) - Clean up without removing active containers
+- [`kamal setup`](/commands/setup) - Redeploy after removal
+
+## Troubleshooting
+
+### Removal Hangs
+
+If removal is stuck:
+
+```bash
+# Check server connectivity
+kamal server status
+
+# Force container removal on server
+ssh user@server "docker rm -f $(docker ps -aq)"
+
+# Check for locked processes
+kamal lock status
+```
+
+### Containers Won't Stop
+
+```bash
+# Force stop containers
+ssh user@server "docker stop -t 1 $(docker ps -q)"
+
+# Force remove containers
+ssh user@server "docker rm -f $(docker ps -aq)"
+```
+
+### Volume Removal Issues
+
+If volumes remain after removal:
+
+```bash
+# List volumes
+ssh user@server "docker volume ls"
+
+# Remove specific volume
+ssh user@server "docker volume rm volume_name"
+
+# Remove all unused volumes
+ssh user@server "docker volume prune -f"
+```
+
+### Incomplete Removal
+
+If some resources remain:
+
+```bash
+# Check remaining containers
+kamal app containers
+
+# Check proxy status
+kamal proxy status
+
+# Manually clean up
+ssh user@server
+docker ps -a
+docker images
+docker system prune -a
+```
+
+## Production Safety Checklist
+
+Before running `kamal remove` in production:
+
+- [ ] Verify you're in the correct environment
+- [ ] Check `config/deploy.yml` to confirm servers
+- [ ] Backup databases and persistent data
+- [ ] Notify team members
+- [ ] Have a rollback plan ready
+- [ ] Consider using selective removal first
+
+```bash
+# Double-check configuration
+kamal config | grep servers
+
+# Backup before removing
+kamal app exec "pg_dump -U postgres mydb > /backup/db.sql"
+
+# Then proceed with removal
+kamal remove
+```

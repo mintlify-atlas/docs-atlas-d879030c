@@ -1,0 +1,405 @@
+---
+title: kamal audit
+description: View audit log of deployment commands from servers
+---
+
+The `kamal audit` command displays a chronological log of all Kamal commands executed on your servers, providing a complete audit trail of deployment activities.
+
+## Overview
+
+Audit logs track every significant operation performed by Kamal, including who ran the command and when, making it essential for debugging and compliance.
+
+<Info>
+  Audit logs are stored directly on each server in the `.kamal/` directory, so they persist across deployments.
+</Info>
+
+## Usage
+
+```bash
+kamal audit
+```
+
+## How It Works
+
+The audit command retrieves logs from all configured servers:
+
+```ruby
+# From main.rb:114-118
+def audit
+  quiet = options[:quiet]
+  on(KAMAL.hosts) do |host|
+    puts_by_host host, capture_with_info(*KAMAL.auditor.reveal), quiet: quiet
+  end
+end
+```
+
+Each server maintains its own audit log at `~/.kamal/audit_log`.
+
+## Example Output
+
+```bash
+$ kamal audit
+```
+
+```
+[192.168.1.10]
+2024-03-11 10:15:23 UTC user@localhost Bootstrapped server
+2024-03-11 10:16:45 UTC user@localhost Logged into registry
+2024-03-11 10:17:12 UTC user@localhost Booted kamal-proxy
+2024-03-11 10:18:34 UTC user@localhost Deployed my-app:20240311-101523
+2024-03-11 10:19:01 UTC user@localhost Pruned images
+2024-03-11 10:19:05 UTC user@localhost Pruned containers
+2024-03-11 14:30:15 UTC user@localhost Deployed my-app:20240311-143008
+2024-03-11 14:30:45 UTC user@localhost Stopped old container my-app-20240311-101523
+2024-03-11 16:22:10 UTC user@localhost Executed cmd 'bundle exec rails console'
+
+[192.168.1.11]
+2024-03-11 10:15:24 UTC user@localhost Bootstrapped server
+2024-03-11 10:16:46 UTC user@localhost Logged into registry
+2024-03-11 10:18:35 UTC user@localhost Deployed my-app:20240311-101523
+2024-03-11 10:19:02 UTC user@localhost Pruned images
+2024-03-11 10:19:06 UTC user@localhost Pruned containers
+2024-03-11 14:30:16 UTC user@localhost Deployed my-app:20240311-143008
+2024-03-11 14:30:46 UTC user@localhost Stopped old container my-app-20240311-101523
+```
+
+## What Gets Logged
+
+The audit log captures:
+
+- **Server Operations**: Bootstrap, Docker installation
+- **Registry Actions**: Login, logout
+- **Proxy Management**: Boot, reboot, stop
+- **Deployments**: Application starts, stops, version changes
+- **Maintenance**: Prune operations, container removals
+- **Manual Commands**: Custom exec commands
+- **Accessory Operations**: Database/Redis management
+
+### Example Log Entries
+
+<CodeGroup>
+```text Deployment
+2024-03-11 14:30:15 UTC user@localhost Deployed my-app:20240311-143008
+2024-03-11 14:30:45 UTC user@localhost Stopped old container my-app-20240311-101523
+```
+
+```text Maintenance
+2024-03-11 10:19:01 UTC user@localhost Pruned images
+2024-03-11 10:19:05 UTC user@localhost Pruned containers
+```
+
+```text Manual Operations
+2024-03-11 16:22:10 UTC user@localhost Executed cmd 'bundle exec rails console'
+2024-03-11 16:45:33 UTC user@localhost Rolled back to version 20240310-120000
+```
+
+```text Accessory Management
+2024-03-11 11:00:00 UTC user@localhost Booted redis accessory
+2024-03-11 11:30:00 UTC user@localhost Restarted postgres accessory
+```
+</CodeGroup>
+
+## Use Cases
+
+### Track Deployments
+
+See when and which versions were deployed:
+
+```bash
+# View recent deployments
+kamal audit | grep "Deployed"
+
+# Last 10 deployments
+kamal audit | grep "Deployed" | tail -10
+```
+
+### Debug Issues
+
+Identify what happened before an incident:
+
+```bash
+# What changed recently?
+kamal audit | tail -20
+
+# Find last deploy
+kamal audit | grep "Deployed" | tail -1
+```
+
+### Compliance and Security
+
+Audit trail for who did what:
+
+```bash
+# All commands from a specific date
+kamal audit | grep "2024-03-11"
+
+# Find who executed commands
+kamal audit | grep "Executed cmd"
+```
+
+### Verify Operations
+
+Confirm operations completed:
+
+```bash
+# Check if prune ran
+kamal audit | grep "Pruned"
+
+# Verify bootstrap completed
+kamal audit | grep "Bootstrapped"
+```
+
+## Filtering Audit Logs
+
+Use standard Unix tools to filter audit output:
+
+```bash
+# Show only deployments
+kamal audit | grep "Deployed"
+
+# Show activity in last hour (approximate)
+kamal audit | tail -50
+
+# Find rollbacks
+kamal audit | grep -i "rollback"
+
+# Search for specific version
+kamal audit | grep "20240311-143008"
+
+# Show audit from specific server
+kamal audit --hosts 192.168.1.10
+
+# Count deployments
+kamal audit | grep -c "Deployed"
+```
+
+## Audit Log Location
+
+Logs are stored on each server:
+
+```bash
+# On server
+~/.kamal/audit_log
+
+# Or with custom SSH user
+/home/deploy/.kamal/audit_log
+```
+
+View directly on server:
+
+```bash
+# SSH into server
+ssh deploy@192.168.1.10
+
+# View audit log
+cat ~/.kamal/audit_log
+
+# Tail recent entries
+tail -f ~/.kamal/audit_log
+```
+
+## Log Format
+
+Each entry follows this format:
+
+```
+YYYY-MM-DD HH:MM:SS UTC username@hostname Action description
+```
+
+- **Timestamp**: UTC time when command was executed
+- **Username**: User who ran the command
+- **Hostname**: Machine from which command was run
+- **Action**: Description of what was done
+
+## How Auditing Works
+
+Kamal adds audit entries throughout its codebase:
+
+```ruby
+# Example from app deployment
+execute *KAMAL.auditor.record("Deployed #{KAMAL.config.version}")
+
+# Example from prune
+execute *KAMAL.auditor.record("Pruned images"), verbosity: :debug
+
+# Example from server exec
+execute *KAMAL.auditor.record("Executed cmd '#{cmd}' on #{host}")
+```
+
+Each `auditor.record` call appends to the server's audit log.
+
+## Audit Log Retention
+
+<Note>
+  Audit logs grow indefinitely. Consider implementing log rotation for long-running deployments.
+</Note>
+
+### Manual Log Rotation
+
+```bash
+# On server, rotate audit log
+ssh deploy@server << 'EOF'
+  cd ~/.kamal
+  mv audit_log audit_log.$(date +%Y%m%d)
+  touch audit_log
+  gzip audit_log.$(date +%Y%m%d)
+EOF
+```
+
+### Automatic Log Rotation
+
+Set up logrotate on servers:
+
+```bash
+# /etc/logrotate.d/kamal-audit
+/home/deploy/.kamal/audit_log {
+  daily
+  rotate 30
+  compress
+  delaycompress
+  notifempty
+  missingok
+  copytruncate
+}
+```
+
+## Exporting Audit Logs
+
+Save audit logs for analysis:
+
+```bash
+# Export all servers
+kamal audit > audit-$(date +%Y%m%d).log
+
+# Export with timestamp
+kamal audit | tee audit-$(date +%Y%m%d-%H%M%S).log
+
+# Separate by server
+kamal audit --hosts 192.168.1.10 > server1-audit.log
+kamal audit --hosts 192.168.1.11 > server2-audit.log
+```
+
+## Analyzing Audit Logs
+
+### Count Operations
+
+```bash
+# Count deployments
+kamal audit | grep -c "Deployed"
+
+# Count prune operations
+kamal audit | grep -c "Pruned"
+
+# Count manual commands
+kamal audit | grep -c "Executed cmd"
+```
+
+### Deployment Timeline
+
+```bash
+# List all deployments with timestamps
+kamal audit | grep "Deployed" | cut -d' ' -f1-4,7-
+
+# Time between deployments
+kamal audit | grep "Deployed" | awk '{print $1, $2}'
+```
+
+### Find Patterns
+
+```bash
+# Operations during specific timeframe
+kamal audit | grep "2024-03-11 14:"
+
+# Failed operations (if logged)
+kamal audit | grep -i "error\|fail"
+
+# Security-relevant events
+kamal audit | grep -E "Bootstrap|Login|Executed cmd"
+```
+
+## Audit Log Integrity
+
+<Info>
+  Audit logs are append-only files, but users with server access can modify them. For tamper-proof auditing, consider forwarding logs to a centralized logging system.
+</Info>
+
+### Centralized Logging
+
+Forward audit logs to external systems:
+
+```bash
+# Example: Send to Papertrail
+kamal audit | logger -t kamal-audit -n logs.papertrailapp.com -P 12345
+
+# Example: Send to Elasticsearch
+kamal audit | jq -R '{message: .}' | curl -X POST "localhost:9200/kamal-audit/_doc" -H 'Content-Type: application/json' -d @-
+```
+
+## Troubleshooting
+
+### Empty Audit Log
+
+If audit log is empty:
+
+```bash
+# Check if audit log exists
+ssh deploy@server "ls -la ~/.kamal/audit_log"
+
+# Verify Kamal has written permissions
+ssh deploy@server "touch ~/.kamal/audit_log && echo 'success'"
+```
+
+### Missing Recent Entries
+
+If recent operations aren't logged:
+
+```bash
+# Check if file is writable
+ssh deploy@server "test -w ~/.kamal/audit_log && echo 'writable'"
+
+# Verify disk space
+ssh deploy@server "df -h ~/.kamal"
+```
+
+### Permission Issues
+
+```bash
+# Fix permissions
+ssh deploy@server "chmod 644 ~/.kamal/audit_log"
+
+# Fix ownership
+ssh deploy@server "chown deploy:deploy ~/.kamal/audit_log"
+```
+
+## Security Considerations
+
+<Warning>
+  Audit logs contain sensitive information about your infrastructure:
+  - Server IP addresses
+  - Deployment times
+  - Usernames and hostnames
+  - Command execution history
+  
+  Restrict access to audit logs appropriately.
+</Warning>
+
+### Secure Audit Access
+
+```bash
+# Restrict log file permissions
+ssh deploy@server "chmod 600 ~/.kamal/audit_log"
+
+# Only owner can read/write
+ssh deploy@server "ls -l ~/.kamal/audit_log"
+# -rw------- 1 deploy deploy 12345 Mar 11 10:15 audit_log
+```
+
+## Related Commands
+
+- [`kamal app logs`](/commands/app/logs) - View application logs
+- [`kamal config`](/commands/config) - View configuration
+- [`kamal details`](/commands/details) - Show deployment status
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/main.rb:113-119`

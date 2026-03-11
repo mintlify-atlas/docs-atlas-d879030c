@@ -1,0 +1,282 @@
+---
+title: kamal registry login
+description: Log in to Docker registry locally and remotely
+---
+
+The `kamal registry login` command authenticates with your Docker registry on both your local machine and remote servers, enabling image push and pull operations.
+
+## Overview
+
+Registry login is typically performed automatically as part of deployment workflows, but can be run independently when needed.
+
+<Note>
+  This command only works with remote registries. For local registries, use `kamal registry setup` instead.
+</Note>
+
+## Usage
+
+```bash
+kamal registry login
+```
+
+### Options
+
+<ParamField path="--skip-local" type="boolean" default={false}>
+  Skip authentication on the local machine. Alias: `-L`
+  
+  ```bash
+  kamal registry login --skip-local
+  ```
+</ParamField>
+
+<ParamField path="--skip-remote" type="boolean" default={false}>
+  Skip authentication on remote servers. Alias: `-R`
+  
+  ```bash
+  kamal registry login --skip-remote
+  ```
+</ParamField>
+
+## How It Works
+
+The login command performs authentication in two locations:
+
+<Steps>
+  <Step title="Local Login">
+    Authenticates Docker on your local machine (where you run Kamal commands).
+    
+    ```ruby
+    # From registry.rb:11
+    run_locally { execute *KAMAL.registry.login } unless options[:skip_local]
+    ```
+    
+    This enables:
+    - Building and pushing images from your local machine
+    - Pulling images for local testing
+  </Step>
+  
+  <Step title="Remote Login">
+    Authenticates Docker on all configured servers.
+    
+    ```ruby
+    # From registry.rb:12
+    on(KAMAL.hosts) { execute *KAMAL.registry.login } unless options[:skip_remote]
+    ```
+    
+    This enables:
+    - Pulling images during deployment
+    - Running containers from private registries
+  </Step>
+</Steps>
+
+## Registry Configuration
+
+Configure your registry in `config/deploy.yml`:
+
+<CodeGroup>
+```yaml Docker Hub
+registry:
+  username: your-dockerhub-username
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml GitHub Container Registry
+registry:
+  server: ghcr.io
+  username: your-github-username
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+
+```yaml Amazon ECR
+registry:
+  server: 123456789.dkr.ecr.us-east-1.amazonaws.com
+  username: AWS
+  password:
+    - AWS_ECR_PASSWORD
+```
+
+```yaml DigitalOcean Container Registry
+registry:
+  server: registry.digitalocean.com/your-registry
+  username: your-do-token
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+```
+</CodeGroup>
+
+## Credentials Setup
+
+Store registry credentials in `.kamal/secrets`:
+
+```bash .kamal/secrets
+# Docker Hub personal access token
+KAMAL_REGISTRY_PASSWORD=$DOCKER_HUB_TOKEN
+
+# Or read from environment
+KAMAL_REGISTRY_PASSWORD="$(cat ~/.docker/token)"
+
+# Or fetch from password manager
+SECRETS=$(kamal secrets fetch --adapter 1password \
+  --account my-account \
+  --from MyVault/Docker \
+  KAMAL_REGISTRY_PASSWORD)
+KAMAL_REGISTRY_PASSWORD=$(kamal secrets extract KAMAL_REGISTRY_PASSWORD $SECRETS)
+```
+
+<Warning>
+  Never commit registry passwords to version control. The `.kamal/secrets` file should be git-ignored.
+</Warning>
+
+## Example Output
+
+```bash
+$ kamal registry login
+
+INFO Running docker login on local machine
+WARNING! Your password will be stored unencrypted in /home/user/.docker/config.json
+Login Succeeded
+
+INFO [192.168.1.10] Running docker login on 192.168.1.10
+INFO [192.168.1.11] Running docker login on 192.168.1.11
+Login Succeeded on all servers
+```
+
+## Skipping Login Steps
+
+### Skip Local Login
+
+Useful when running on a CI server that's already authenticated:
+
+```bash
+kamal registry login --skip-local
+```
+
+### Skip Remote Login
+
+Useful when testing configuration without affecting servers:
+
+```bash
+kamal registry login --skip-remote
+```
+
+## Local Registry Exception
+
+If you're using a local registry (configured with `local: true`), this command will fail:
+
+```ruby
+# From registry.rb:32-34
+if KAMAL.registry.local?
+  raise "Cannot use login command with a local registry. Use `kamal registry setup` instead."
+end
+```
+
+For local registries:
+
+```bash
+kamal registry setup
+```
+
+## Integration with Deployment
+
+Registry login is automatically performed during:
+
+- `kamal setup` - Initial server setup
+- `kamal deploy` - Before building and pushing images
+- `kamal build deliver` - Before pushing built images
+
+You rarely need to run `kamal registry login` manually unless:
+- Credentials have expired
+- Rotating access tokens
+- Troubleshooting authentication issues
+
+## Troubleshooting
+
+### Authentication Failed
+
+```bash
+Error: unauthorized: incorrect username or password
+```
+
+**Solutions**:
+
+1. Verify credentials in `.kamal/secrets`:
+   ```bash
+   kamal config | grep registry
+   ```
+
+2. Test credentials manually:
+   ```bash
+   docker login -u your-username -p "$KAMAL_REGISTRY_PASSWORD"
+   ```
+
+3. For GitHub Container Registry, ensure you're using a Personal Access Token with `write:packages` scope
+
+4. For AWS ECR, ensure your token is fresh:
+   ```bash
+   AWS_ECR_PASSWORD=$(aws ecr get-login-password --region us-east-1)
+   ```
+
+### Token Expired
+
+Some registries use short-lived tokens (like AWS ECR). Refresh before login:
+
+```bash .kamal/secrets
+# AWS ECR token (expires after 12 hours)
+AWS_ECR_PASSWORD=$(aws ecr get-login-password --region us-east-1)
+```
+
+### Certificate Issues
+
+For self-hosted registries with self-signed certificates:
+
+```bash
+# On each server
+ssh user@server "sudo mkdir -p /etc/docker/certs.d/registry.example.com"
+ssh user@server "sudo cp ca.crt /etc/docker/certs.d/registry.example.com/"
+```
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Use Access Tokens">
+    Prefer personal access tokens over passwords:
+    - Docker Hub: Create a token at https://hub.docker.com/settings/security
+    - GitHub: Use a token with `write:packages` scope
+    - GitLab: Create a deploy token or personal access token
+  </Step>
+  
+  <Step title="Limit Token Scope">
+    Create tokens with minimal required permissions:
+    - Read-only for servers (if possible)
+    - Write permissions only for CI/CD
+  </Step>
+  
+  <Step title="Rotate Credentials">
+    Regularly rotate registry credentials:
+    ```bash
+    # Update .kamal/secrets with new token
+    # Then re-login
+    kamal registry login
+    ```
+  </Step>
+  
+  <Step title="Use Password Managers">
+    Store credentials in a password manager:
+    ```bash .kamal/secrets
+    SECRETS=$(kamal secrets fetch --adapter 1password ...)
+    KAMAL_REGISTRY_PASSWORD=$(kamal secrets extract KAMAL_REGISTRY_PASSWORD $SECRETS)
+    ```
+  </Step>
+</Steps>
+
+## Related Commands
+
+- [`kamal registry logout`](/commands/registry/logout) - Log out of registry
+- [`kamal registry setup`](/commands/registry/setup) - Setup registry (including login)
+- [`kamal build deliver`](/commands/build/deliver) - Build and push images
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/registry.rb:28-37`

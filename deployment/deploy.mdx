@@ -1,0 +1,454 @@
+---
+title: Deploy
+description: Standard deployment workflow for building and deploying your application with Kamal
+---
+
+The `kamal deploy` command is the primary way to deploy updates to your application. It handles building your image, pushing it to the registry, and rolling it out to your servers.
+
+## Deployment Overview
+
+A standard Kamal deployment follows this sequence:
+
+<Steps>
+  <Step title="Build & Push Image">
+    Build your Docker image and push it to the configured registry.
+  </Step>
+  
+  <Step title="Boot kamal-proxy">
+    Ensure the proxy is running on all servers to handle traffic routing.
+  </Step>
+  
+  <Step title="Detect Stale Containers">
+    Find and stop containers from previous deployments that are no longer the current version.
+  </Step>
+  
+  <Step title="Boot Application">
+    Start new containers with the updated image, performing a zero-downtime rollout.
+  </Step>
+  
+  <Step title="Prune Resources">
+    Clean up old containers and images to free up disk space.
+  </Step>
+</Steps>
+
+## Basic Deployment
+
+```bash
+kamal deploy
+```
+
+This runs the complete deployment sequence defined in `main.rb:18-52`:
+
+```ruby
+def deploy(boot_accessories: false)
+  runtime = print_runtime do
+    invoke_options = deploy_options
+    
+    if options[:skip_push]
+      say "Pull app image...", :magenta
+      invoke "kamal:cli:build:pull", [], invoke_options
+    else
+      say "Build and push app image...", :magenta
+      invoke "kamal:cli:build:deliver", [], invoke_options
+    end
+    
+    with_lock do
+      run_hook "pre-deploy", secrets: true
+      
+      say "Ensure kamal-proxy is running...", :magenta
+      invoke "kamal:cli:proxy:boot", [], invoke_options
+      
+      invoke "kamal:cli:accessory:boot", [ "all" ], invoke_options if boot_accessories
+      
+      say "Detect stale containers...", :magenta
+      invoke "kamal:cli:app:stale_containers", [], invoke_options.merge(stop: true)
+      
+      invoke "kamal:cli:app:boot", [], invoke_options
+      
+      say "Prune old containers and images...", :magenta
+      invoke "kamal:cli:prune:all", [], invoke_options
+    end
+  end
+  
+  run_hook "post-deploy", secrets: true, runtime: runtime.round.to_s
+end
+```
+
+## Deployment Options
+
+### Skip Image Build
+
+If you've already built and pushed your image:
+
+```bash
+kamal deploy --skip-push
+```
+
+This will pull the existing image instead of building a new one.
+
+### Build Without Cache
+
+Force a fresh build without using Docker's build cache:
+
+```bash
+kamal deploy --no-cache
+```
+
+<Warning>
+  No-cache builds take significantly longer but ensure all layers are rebuilt from scratch.
+</Warning>
+
+## Build and Push Process
+
+The build process (`build.rb:4-67`) handles:
+
+### Image Building
+
+```ruby
+# From build.rb:13-67
+def push
+  pre_connect_if_required
+  ensure_docker_installed
+  login_to_registry_locally if KAMAL.builder.login_to_registry_locally?
+  
+  run_hook "pre-build"
+  
+  uncommitted_changes = Kamal::Git.uncommitted_changes
+  
+  if uncommitted_changes.present?
+    say "Building with uncommitted changes:\n #{uncommitted_changes}", :yellow
+  end
+  
+  forward_local_registry_port_for_remote_builder do
+    with_env(KAMAL.config.builder.secrets) do
+      run_locally do
+        execute *KAMAL.builder.push(
+          cli.options[:output], 
+          no_cache: cli.options[:no_cache]
+        )
+      end
+    end
+  end
+end
+```
+
+<Info>
+  Kamal tracks uncommitted changes and warns you when deploying with uncommitted code.
+</Info>
+
+### Image Distribution
+
+After building, the image is pulled to servers:
+
+```ruby
+# From build.rb:69-84
+def pull
+  login_to_registry_remotely unless KAMAL.registry.local?
+  
+  forward_local_registry_port(KAMAL.hosts, **KAMAL.config.ssh.options) do
+    if (first_hosts = mirror_hosts).any?
+      # Pull on a single host per mirror first to seed them
+      say "Pulling image on #{first_hosts.join(", ")} to seed the mirror...", :magenta
+      pull_on_hosts(first_hosts)
+      say "Pulling image on remaining hosts...", :magenta
+      pull_on_hosts(KAMAL.app_hosts - first_hosts)
+    else
+      pull_on_hosts(KAMAL.app_hosts)
+    end
+  end
+end
+```
+
+<Note>
+  When using registry mirrors, Kamal intelligently seeds one host per mirror first to optimize pull performance.
+</Note>
+
+## Application Boot Process
+
+The boot process (`app.rb:2-41`) ensures zero-downtime deployment:
+
+```ruby
+def boot
+  with_lock do
+    say "Get most recent version available as an image...", :magenta unless options[:version]
+    using_version(version_or_latest) do |version|
+      say "Start container with version #{version} (or reboot if already running)...", :magenta
+      
+      # Assets are prepared in a separate step
+      on(KAMAL.app_hosts) do
+        KAMAL.roles_on(host).each do |role|
+          Kamal::Cli::App::Assets.new(host, role, self).run
+          Kamal::Cli::App::SslCertificates.new(host, role, self).run
+        end
+      end
+      
+      # Boot in groups with healthcheck barrier
+      barrier = Kamal::Cli::Healthcheck::Barrier.new
+      
+      host_boot_groups.each do |hosts|
+        host_list = Array(hosts).join(",")
+        run_hook "pre-app-boot", hosts: host_list
+        
+        on_roles(KAMAL.roles, hosts: hosts, parallel: KAMAL.config.boot.parallel_roles) do |host, role|
+          Kamal::Cli::App::Boot.new(host, role, self, version, barrier).run
+        end
+        
+        run_hook "post-app-boot", hosts: host_list
+        sleep KAMAL.config.boot.wait if KAMAL.config.boot.wait
+      end
+      
+      # Tag as latest after successful boot on all hosts
+      on(KAMAL.app_hosts) do |host|
+        execute *KAMAL.auditor.record("Tagging #{KAMAL.config.absolute_image} as the latest image")
+        execute *KAMAL.app.tag_latest_image
+      end
+    end
+  end
+end
+```
+
+## Deployment Hooks
+
+Kamal runs hooks at key points in the deployment:
+
+### Pre-Deploy Hook
+
+```bash .kamal/hooks/pre-deploy
+#!/bin/sh
+
+# Run before deployment starts (after image build)
+# Has access to secrets via environment variables
+
+echo "Starting deployment of $KAMAL_VERSION"
+# Notify deployment tracking service
+# Run database backups
+# etc.
+```
+
+### Post-Deploy Hook
+
+```bash .kamal/hooks/post-deploy
+#!/bin/sh
+
+# Run after successful deployment
+# Receives runtime in seconds as $KAMAL_RUNTIME
+
+echo "Deployment completed in $KAMAL_RUNTIME seconds"
+# Notify team channels
+# Clear CDN cache
+# etc.
+```
+
+### App Boot Hooks
+
+```bash .kamal/hooks/pre-app-boot
+#!/bin/sh
+
+# Run before booting containers on each host
+# Receives comma-separated host list as $KAMAL_HOSTS
+```
+
+```bash .kamal/hooks/post-app-boot
+#!/bin/sh
+
+# Run after containers boot on each host
+```
+
+<Info>
+  Hooks must be executable (`chmod +x .kamal/hooks/*`) and should exit with status 0 for success.
+</Info>
+
+## Redeploy (Fast Deploy)
+
+For faster deployments when you don't need the full sequence:
+
+```bash
+kamal redeploy
+```
+
+Redeploy skips:
+- Server bootstrapping
+- kamal-proxy startup
+- Pruning old containers/images
+
+```ruby
+# From main.rb:54-80
+def redeploy
+  runtime = print_runtime do
+    invoke_options = deploy_options
+    
+    if options[:skip_push]
+      say "Pull app image...", :magenta
+      invoke "kamal:cli:build:pull", [], invoke_options
+    else
+      say "Build and push app image...", :magenta
+      invoke "kamal:cli:build:deliver", [], invoke_options
+    end
+    
+    with_lock do
+      run_hook "pre-deploy", secrets: true
+      
+      say "Detect stale containers...", :magenta
+      invoke "kamal:cli:app:stale_containers", [], invoke_options.merge(stop: true)
+      
+      invoke "kamal:cli:app:boot", [], invoke_options
+    end
+  end
+  
+  run_hook "post-deploy", secrets: true, runtime: runtime.round.to_s
+end
+```
+
+<Note>
+  Use `redeploy` for quick iterations during development or when you know the infrastructure is already properly configured.
+</Note>
+
+## Deployment Locking
+
+Kamal uses deployment locks to prevent concurrent deployments:
+
+```ruby
+with_lock do
+  # deployment operations
+end
+```
+
+If another deployment is in progress, the command will wait or fail depending on your configuration.
+
+### Managing Locks
+
+```bash
+# Check lock status
+kamal lock status
+
+# Acquire lock
+kamal lock acquire
+
+# Release lock
+kamal lock release
+```
+
+<Warning>
+  Only force-release a lock if you're certain no deployment is actually running, as this could cause conflicts.
+</Warning>
+
+## Monitoring Deployments
+
+### Watch Deployment Progress
+
+In a separate terminal:
+
+```bash
+# Follow logs during deployment
+kamal app logs --follow
+
+# Check container status
+watch kamal app containers
+```
+
+### Verify Deployment
+
+After deployment:
+
+```bash
+# Check all services
+kamal details
+
+# Verify app version
+kamal app version
+
+# Check app health
+kamal app containers
+```
+
+## Troubleshooting
+
+### Build Fails
+
+```
+ERROR: failed to solve: process "/bin/sh -c bundle install" did not complete successfully
+```
+
+**Solution**: Check your Dockerfile and build logs. Common issues:
+- Missing dependencies
+- Network timeouts
+- Incorrect base image
+
+### Image Pull Fails
+
+```
+Error response from daemon: pull access denied
+```
+
+**Solution**: Verify registry credentials:
+
+```bash
+# Test registry login
+kamal registry login
+
+# Check registry configuration
+kamal config | grep registry
+```
+
+### Container Won't Start
+
+Check container logs for errors:
+
+```bash
+kamal app logs --lines 100
+kamal app details
+```
+
+Common issues:
+- Missing environment variables
+- Port conflicts
+- Volume permission problems
+
+### Stale Containers Not Stopping
+
+```bash
+# Manually stop stale containers
+kamal app stale_containers --stop
+
+# Force remove if needed
+kamal app remove_container VERSION
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Test Locally First">
+    Always build and test your Docker image locally before deploying:
+    
+    ```bash
+    kamal build dev
+    docker run -p 3000:3000 your-image:latest-dirty
+    ```
+  </Step>
+  
+  <Step title="Use Version Tags">
+    Let Kamal automatically version your deployments using git commits. This enables easy rollbacks.
+  </Step>
+  
+  <Step title="Monitor Logs">
+    Keep an eye on logs during initial deployments to catch issues early:
+    
+    ```bash
+    kamal app logs --follow --lines 50
+    ```
+  </Step>
+  
+  <Step title="Deploy to Staging First">
+    Use multiple environments to test changes before production:
+    
+    ```bash
+    kamal deploy --destination staging
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+- Learn about [zero-downtime deployments](/deployment/zero-downtime)
+- Configure [rolling deployments](/deployment/rolling-deploys)
+- Set up [rollback procedures](/deployment/rollback)

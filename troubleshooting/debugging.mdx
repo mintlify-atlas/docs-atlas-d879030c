@@ -1,0 +1,539 @@
+---
+title: Debugging
+description: Techniques and tools for debugging Kamal deployments
+---
+
+Learn how to debug issues during and after deployment using Kamal's built-in debugging tools.
+
+## Verbose Mode
+
+Verbose mode provides detailed logging of all operations, making it the first tool to reach for when debugging.
+
+### Enable Verbose Output
+
+Add the `--verbose` (or `-v`) flag to any Kamal command:
+
+```bash
+kamal deploy --verbose
+kamal app boot --verbose
+kamal build push --verbose
+```
+
+### What Verbose Mode Shows
+
+<Accordion title="SSH Commands">
+  Every SSH command executed on remote servers:
+  
+  ```
+  INFO [abc123] Running /usr/bin/env docker ps --filter label=service=myapp
+  DEBUG [abc123] Command: docker ps --filter label=service=myapp
+  DEBUG [abc123]   container_id  image  status
+  ```
+</Accordion>
+
+<Accordion title="Docker Operations">
+  All Docker commands with their parameters:
+  
+  ```
+  DEBUG Running: docker buildx build --push --platform linux/amd64,linux/arm64 \
+    --builder kamal-myapp --tag registry.example.com/myapp:latest .
+  ```
+</Accordion>
+
+<Accordion title="Registry Authentication">
+  Registry login attempts and results:
+  
+  ```
+  INFO [abc123] Running docker login -u username registry.example.com
+  DEBUG [abc123] Login Succeeded
+  ```
+</Accordion>
+
+<Accordion title="Lock Operations">
+  Deploy lock acquisition and release:
+  
+  ```
+  DEBUG [abc123] Running: mkdir -p /tmp/kamal-lock && \
+    echo "Automatic deploy lock v1.2.3" > /tmp/kamal-lock/details
+  ```
+</Accordion>
+
+<Tip>
+  Verbose mode sets the verbosity level to `:debug`, which is defined in `lib/kamal/cli/base.rb:8`.
+</Tip>
+
+## Quiet Mode
+
+For minimal output showing only errors:
+
+```bash
+kamal deploy --quiet
+kamal app logs --quiet
+```
+
+Quiet mode sets verbosity to `:error` level.
+
+## SSH Debugging
+
+### Interactive SSH Sessions
+
+Connect directly to your application container:
+
+```bash
+# Start an interactive bash session
+kamal app exec --interactive bash
+
+# Start a Rails console
+kamal app exec --interactive 'bin/rails console'
+
+# Run psql in database container
+kamal app exec --interactive psql
+```
+
+<Warning>
+  Interactive mode only works on the primary host. Use `--hosts` to target a specific server.
+</Warning>
+
+### Reuse Running Containers
+
+Execute commands in existing containers instead of starting new ones:
+
+```bash
+# Debug in the currently running container
+kamal app exec --reuse --interactive bash
+
+# Check environment variables in running container
+kamal app exec --reuse env
+```
+
+### Execute on Specific Hosts
+
+Target specific servers for debugging:
+
+```bash
+# Run on specific host
+kamal app exec --hosts 1.2.3.4 "ps aux"
+
+# Run on hosts matching pattern
+kamal app exec --hosts "web-*" "df -h"
+
+# Run on specific role
+kamal app exec --roles worker "bundle exec sidekiq --version"
+```
+
+### Execute on Primary Host Only
+
+```bash
+# Run only on primary server
+kamal app exec --primary "cat /app/config/database.yml"
+```
+
+## Container Inspection
+
+### List Running Containers
+
+```bash
+# Show all app containers
+kamal app containers
+
+# Show containers on all hosts
+kamal app details
+```
+
+<CodeGroup>
+```bash Output Example
+Host: web1.example.com
+CONTAINER ID   IMAGE                              STATUS         PORTS
+abc123def456   registry.example.com/myapp:v123   Up 2 hours     0.0.0.0:3000->3000/tcp
+```
+</CodeGroup>
+
+### Check Container Status
+
+```bash
+# Show detailed container information
+kamal app details
+
+# Show proxy status
+kamal proxy details
+
+# Show all services
+kamal details
+```
+
+### Detect Stale Containers
+
+Find old containers that weren't properly removed:
+
+```bash
+# Detect stale containers
+kamal app stale_containers
+
+# Stop stale containers
+kamal app stale_containers --stop
+```
+
+## Version Tracking
+
+### Check Running Versions
+
+```bash
+# Show version on each server
+kamal app version
+
+# Show all container versions
+kamal app containers
+```
+
+### List Available Images
+
+```bash
+# Show all images on servers
+kamal app images
+```
+
+## Configuration Debugging
+
+### View Resolved Configuration
+
+See the complete configuration including secrets:
+
+```bash
+kamal config
+```
+
+<Warning>
+  This command shows **unredacted secrets**. Be careful not to share the output.
+</Warning>
+
+### Test Configuration Destinations
+
+When using multiple destinations (staging, production):
+
+```bash
+# View staging config
+kamal config --destination staging
+
+# View production config  
+kamal config --destination production
+
+# Deploy to specific destination
+kamal deploy --destination staging
+```
+
+### Validate Configuration
+
+Use the built-in documentation to validate your config:
+
+```bash
+# Show all configuration options
+kamal docs
+
+# Show specific section documentation
+kamal docs servers
+kamal docs builder
+kamal docs proxy
+kamal docs ssh
+```
+
+## Audit Trail
+
+View the complete history of Kamal operations:
+
+```bash
+kamal audit
+```
+
+<CodeGroup>
+```bash Output Example
+2024-03-11 15:23:45 UTC Deployed app version v123 (user@hostname)
+2024-03-11 15:20:12 UTC Acquired deploy lock (user@hostname)
+2024-03-11 14:55:03 UTC Pulled image with version v122
+2024-03-11 14:30:45 UTC Stopped app (user@hostname)
+```
+</CodeGroup>
+
+The audit log is stored on each server at `~/.kamal/APPNAME/audit.log`.
+
+## Hook Debugging
+
+### View Hook Execution
+
+Hooks run at various points during deployment. Enable verbose output:
+
+```yaml
+# config/deploy.yml
+hooks:
+  pre-deploy:
+    output: verbose  # Show all hook output
+```
+
+Options:
+- `verbose` - Always show output
+- `quiet` - Never show output  
+- Default - Show only on errors
+
+### Skip Hooks During Debugging
+
+Bypass hooks to isolate issues:
+
+```bash
+# Deploy without running hooks
+kamal deploy --skip-hooks
+
+# Any command supports --skip-hooks
+kamal app boot --skip-hooks
+```
+
+### Test Hooks Manually
+
+Hooks are executable scripts in `.kamal/hooks/`. Test them directly:
+
+```bash
+# Run hook with environment variables
+export KAMAL_HOSTS="1.2.3.4,5.6.7.8"
+export KAMAL_COMMAND=deploy
+export KAMAL_VERSION=v123
+.kamal/hooks/pre-deploy
+```
+
+Available environment variables:
+- `KAMAL_HOSTS` - Comma-separated host list
+- `KAMAL_ROLES` - Comma-separated role list
+- `KAMAL_COMMAND` - The command being run
+- `KAMAL_SUBCOMMAND` - The subcommand (if any)
+- `KAMAL_VERSION` - App version being deployed
+- `KAMAL_RUNTIME` - Deployment runtime (post-deploy only)
+- Plus any secrets from `.kamal/secrets`
+
+## Build Debugging
+
+### Inspect Builder
+
+Check the build environment:
+
+```bash
+# Show builder details
+kamal build details
+```
+
+<CodeGroup>
+```bash Output
+Builder: kamal-myapp-multiarch
+Name:      kamal-myapp-multiarch
+Driver:    docker-container
+Platforms: linux/amd64*, linux/arm64*
+```
+</CodeGroup>
+
+### Test Build Without Push
+
+Build to local Docker (development mode):
+
+```bash
+# Build and tag as "dirty", don't push to registry
+kamal build dev
+```
+
+This is useful for:
+- Testing Dockerfile changes
+- Debugging build failures
+- Working with uncommitted code
+
+### Remote Builder Debugging
+
+When using a remote builder:
+
+```bash
+# Connect to remote builder manually
+ssh builder-host
+
+# Check Docker on remote builder
+docker info
+docker buildx ls
+```
+
+## Registry Debugging
+
+### Test Registry Authentication
+
+```bash
+# Login to registry
+kamal registry login
+
+# Test locally
+kamal registry login --skip-remote
+
+# Test on servers only
+kamal registry login --skip-local
+```
+
+### Pull Images Manually
+
+Test image availability:
+
+```bash
+# Pull latest image to servers
+kamal build pull
+
+# Verify image exists
+kamal app images
+```
+
+## Network Debugging
+
+### Test Connectivity
+
+Verify network connectivity between components:
+
+```bash
+# Test app can reach database
+kamal app exec 'nc -zv db 5432'
+
+# Test external connectivity
+kamal app exec 'curl -I https://api.example.com'
+
+# Check DNS resolution
+kamal app exec 'nslookup api.example.com'
+```
+
+### Inspect Docker Networks
+
+```bash
+# List networks
+kamal app exec 'docker network ls'
+
+# Inspect kamal network
+kamal app exec 'docker network inspect kamal'
+```
+
+## Environment Variable Debugging
+
+### Check Environment in Container
+
+```bash
+# List all environment variables
+kamal app exec --reuse env | sort
+
+# Check specific variable
+kamal app exec --reuse 'echo $DATABASE_URL'
+
+# View Rails secrets
+kamal app exec --reuse 'bin/rails runner "puts Rails.application.secrets.inspect"'
+```
+
+### Test Secrets Loading
+
+Verify secrets are loaded correctly:
+
+```bash
+# Source secrets file
+source .kamal/secrets
+
+# Check variables are exported
+env | grep KAMAL
+```
+
+## Health Check Debugging
+
+When containers fail health checks:
+
+```bash
+# Test health endpoint manually
+kamal app exec 'curl -f http://localhost:3000/up'
+
+# Check what the health check sees
+kamal app exec --reuse 'wget -O- http://localhost:3000/up'
+
+# View health check configuration
+kamal config | grep -A 5 healthcheck
+```
+
+## Performance Profiling
+
+### Measure Deploy Time
+
+Kamal shows deployment duration at the end:
+
+```
+Finished all in 45.3 seconds
+```
+
+### Identify Slow Steps
+
+Run with verbose mode and note timestamps:
+
+```bash
+kamal deploy --verbose 2>&1 | ts '[%Y-%m-%d %H:%M:%S]'
+```
+
+(Requires `moreutils` package for `ts` command)
+
+## Advanced Debugging
+
+### Access Server Directly
+
+Bypass Kamal and SSH directly:
+
+```bash
+# SSH to server
+ssh deploy@your-server
+
+# Check Docker directly
+docker ps
+docker logs container_id
+
+# Check system resources
+htop
+df -h
+free -h
+```
+
+### Check Docker Daemon
+
+```bash
+# On the server:
+docker info
+docker version
+systemctl status docker
+
+# Check for Docker errors
+journalctl -u docker -n 100
+```
+
+### Export Debugging Bundle
+
+Collect comprehensive debugging information:
+
+```bash
+#!/bin/bash
+# Save to debug-bundle.txt
+
+echo "=== Configuration ==="
+kamal config
+
+echo -e "\n=== App Details ==="
+kamal app details
+
+echo -e "\n=== Proxy Details ==="  
+kamal proxy details
+
+echo -e "\n=== Containers ==="
+kamal app containers
+
+echo -e "\n=== Images ==="
+kamal app images
+
+echo -e "\n=== Recent Logs ==="
+kamal app logs --lines 100
+
+echo -e "\n=== Audit Log ==="
+kamal audit
+
+echo -e "\n=== Version ==="
+kamal version
+```
+
+<Tip>
+  When reporting issues, always include the output of `kamal version` and redacted configuration.
+</Tip>

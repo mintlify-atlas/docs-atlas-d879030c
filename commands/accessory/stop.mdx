@@ -1,0 +1,335 @@
+---
+title: kamal accessory stop
+description: Stop a running accessory container
+---
+
+The `kamal accessory stop` command gracefully stops a running accessory container without removing it. The container can be restarted later with [`kamal accessory start`](/commands/accessory/start).
+
+## Basic Usage
+
+```bash
+kamal accessory stop <NAME>
+```
+
+### Stop a Database
+
+```bash
+kamal accessory stop mysql
+```
+
+<Note>
+The container remains on the host after stopping and can be restarted with `kamal accessory start`.
+</Note>
+
+## What Stop Does
+
+The stop command performs these operations:
+
+<Steps>
+  <Step title="Remove from Proxy">
+    If the accessory uses kamal-proxy, removes it from proxy routing first.
+  </Step>
+  
+  <Step title="Stop Container">
+    Executes `docker stop` on the container, allowing graceful shutdown.
+  </Step>
+  
+  <Step title="Update Audit Log">
+    Records the stop action in the audit log.
+  </Step>
+</Steps>
+
+## When to Use Stop
+
+### Temporary Maintenance
+
+Stop an accessory during maintenance windows:
+
+```bash
+# Stop database for backup
+kamal accessory stop postgres
+
+# Perform backup
+ssh user@host "pg_dump myapp_production > backup.sql"
+
+# Resume service
+kamal accessory start postgres
+```
+
+### Resource Management
+
+Free up resources temporarily:
+
+```bash
+# Stop non-critical accessories
+kamal accessory stop redis
+kamal accessory stop memcached
+
+# Perform resource-intensive operation
+# ...
+
+# Restart accessories
+kamal accessory start redis
+kamal accessory start memcached
+```
+
+### Before Configuration Changes
+
+Some configuration changes require stopping first:
+
+```bash
+# Stop before updating volumes or ports
+kamal accessory stop mysql
+
+# Update configuration in deploy.yml
+# ...
+
+# Reboot with new configuration
+kamal accessory reboot mysql
+```
+
+## Examples
+
+### Stop Before Host Maintenance
+
+<Tabs>
+  <Tab title="Preparation">
+    ```bash
+    # Stop all accessories on host
+    kamal accessory stop mysql
+    kamal accessory stop redis
+    
+    # Verify they're stopped
+    kamal accessory details mysql
+    kamal accessory details redis
+    ```
+  </Tab>
+  
+  <Tab title="After Maintenance">
+    ```bash
+    # Restart accessories
+    kamal accessory start mysql
+    kamal accessory start redis
+    
+    # Verify they're running
+    kamal accessory details mysql
+    kamal accessory details redis
+    ```
+  </Tab>
+</Tabs>
+
+### Stop Accessory with Proxy
+
+<CodeGroup>
+```yaml Configuration
+accessories:
+  adminer:
+    image: adminer:latest
+    host: 192.168.0.10
+    
+    proxy:
+      host: db-admin.example.com
+      ssl: true
+      app_port: 8080
+```
+
+```bash Stop Command
+kamal accessory stop adminer
+# Removes from proxy first, then stops container
+```
+
+```text Output
+INFO [abc123] Removing adminer from kamal-proxy...
+INFO [abc123] Stopping adminer accessory on 192.168.0.10...
+INFO Stopped adminer accessory
+```
+</CodeGroup>
+
+<Note>
+When stopping an accessory with proxy configuration, Kamal automatically removes the proxy routes to prevent 502 errors.
+</Note>
+
+### Stop for Database Migration
+
+```bash
+# Stop application-facing cache
+kamal accessory stop redis
+
+# Perform Redis upgrade or migration
+# ...
+
+# Start with new configuration
+kamal accessory start redis
+```
+
+## Stop vs. Remove
+
+| Command | Container State | Can Restart | Data Preserved |
+|---------|----------------|-------------|----------------|
+| `stop` | Stopped, still exists | Yes with `start` | Yes, all data |
+| `remove` | Completely removed | No, need `boot` | Only volumes |
+
+<Warning>
+[`kamal accessory remove`](/commands/accessory/remove) permanently deletes the container. Use `stop` if you plan to restart.
+</Warning>
+
+## Graceful Shutdown
+
+The stop command uses `docker stop`, which:
+
+1. Sends SIGTERM to the container
+2. Waits for graceful shutdown (default 10 seconds)
+3. Sends SIGKILL if still running
+
+```yaml deploy.yml
+accessories:
+  postgres:
+    image: postgres:15
+    host: 192.168.0.10
+    options:
+      # Increase shutdown timeout
+      stop-timeout: 30
+```
+
+<Info>
+Use `stop-timeout` option to allow more time for accessories to shut down gracefully.
+</Info>
+
+## Multiple Hosts
+
+Stopping an accessory on multiple hosts:
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+```
+
+```bash
+kamal accessory stop redis
+# Stops on both hosts simultaneously
+```
+
+## Implementation Details
+
+From `accessory.rb:108-123`:
+
+```ruby
+def stop(name)
+  with_lock do
+    with_accessory(name) do |accessory, hosts|
+      on(hosts) do
+        execute *KAMAL.auditor.record("Stopped #{name} accessory"), verbosity: :debug
+        execute *accessory.stop, raise_on_non_zero_exit: false
+        
+        if accessory.running_proxy?
+          target = capture_with_info(*accessory.container_id_for(container_name: accessory.service_name, only_running: true)).strip
+          execute *accessory.remove if target
+        end
+      end
+    end
+  end
+end
+```
+
+<Note>
+The command uses `raise_on_non_zero_exit: false` to handle cases where the container is already stopped.
+</Note>
+
+## Troubleshooting
+
+### Container Already Stopped
+
+```bash
+kamal accessory stop mysql
+# No error if already stopped
+```
+
+The command succeeds even if the container is already stopped.
+
+### Container Won't Stop
+
+```bash
+# Check container status
+kamal accessory details mysql
+
+# Check logs for issues
+kamal accessory logs mysql --lines 50
+
+# Force remove if necessary
+ssh user@host "docker stop --time 60 myapp-mysql"
+```
+
+### Proxy Routes Not Removed
+
+```bash
+# Check proxy status
+kamal proxy details
+
+# Manually remove route if needed
+kamal proxy remove myapp-adminer
+```
+
+## Use Cases
+
+### Scheduled Maintenance
+
+```bash
+#!/bin/bash
+# maintenance.sh
+
+echo "Stopping accessories..."
+kamal accessory stop mysql
+kamal accessory stop redis
+
+echo "Performing maintenance..."
+# maintenance tasks
+
+echo "Restarting accessories..."
+kamal accessory start mysql
+kamal accessory start redis
+```
+
+### Emergency Resource Recovery
+
+```bash
+# Quick way to free resources
+kamal accessory stop redis
+kamal accessory stop memcached
+
+# Investigate resource issue
+# ...
+
+# Restart when resolved
+kamal accessory start redis
+kamal accessory start memcached
+```
+
+### Testing Failure Scenarios
+
+```bash
+# Test app behavior without Redis
+kamal accessory stop redis
+
+# Run tests
+# ...
+
+# Restore service
+kamal accessory start redis
+```
+
+## Related Commands
+
+- [`kamal accessory start`](/commands/accessory/start) - Start stopped container
+- [`kamal accessory restart`](/commands/accessory/restart) - Stop and start in one command
+- [`kamal accessory remove`](/commands/accessory/remove) - Stop and remove completely
+- [`kamal accessory details`](/commands/accessory/details) - Check container status
+- [`kamal accessory logs`](/commands/accessory/logs) - View container logs
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Docker Options](/configuration/accessories#docker-options) - Configure stop behavior

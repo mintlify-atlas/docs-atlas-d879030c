@@ -1,0 +1,443 @@
+---
+title: SSL Certificate Setup
+description: Configure SSL/TLS certificates with Let's Encrypt or custom certificates
+---
+
+Kamal includes built-in support for SSL certificates through its integrated kamal-proxy, with automatic Let's Encrypt certificate provisioning and custom certificate support.
+
+## Automatic SSL with Let's Encrypt
+
+### Basic Configuration
+
+Enable automatic SSL certificate provisioning with Let's Encrypt:
+
+```yaml
+proxy:
+  ssl: true
+  host: app.example.com
+```
+
+When you deploy, Kamal will:
+- Automatically request a certificate from Let's Encrypt
+- Handle certificate renewal
+- Redirect HTTP to HTTPS
+- Terminate SSL at the proxy
+
+<Tip>
+Let's Encrypt certificates are valid for 90 days and are automatically renewed by kamal-proxy.
+</Tip>
+
+### Multiple Domains
+
+Configure SSL for multiple domains:
+
+```yaml
+proxy:
+  ssl: true
+  hosts:
+    - app.example.com
+    - www.example.com
+    - api.example.com
+```
+
+Kamal will request a certificate covering all specified domains.
+
+### SSL Redirect
+
+Control HTTP to HTTPS redirection:
+
+```yaml
+proxy:
+  ssl: true
+  host: app.example.com
+  ssl_redirect: true  # Default: true
+```
+
+Set to `false` if you want to handle redirects in your application.
+
+## Custom SSL Certificates
+
+### Using Your Own Certificates
+
+If you have existing SSL certificates or need to use a specific CA:
+
+<Steps>
+
+<Step title="Store Certificate Files">
+Add your certificate and private key to `.kamal/secrets`:
+
+```bash
+# .kamal/secrets
+SSL_CERTIFICATE_PEM=$(cat /path/to/certificate.pem)
+SSL_PRIVATE_KEY_PEM=$(cat /path/to/private-key.pem)
+```
+</Step>
+
+<Step title="Configure deploy.yml">
+```yaml
+proxy:
+  ssl:
+    certificate_pem: SSL_CERTIFICATE_PEM
+    private_key_pem: SSL_PRIVATE_KEY_PEM
+  host: app.example.com
+```
+</Step>
+
+<Step title="Deploy">
+Kamal will upload and configure your custom certificates:
+
+```bash
+kamal deploy
+```
+</Step>
+
+</Steps>
+
+<Warning>
+Custom certificates are not auto-renewed. You must manually update them before expiration and redeploy.
+</Warning>
+
+### Certificate Upload Process
+
+When deploying with custom certificates, Kamal:
+
+1. Creates the SSL directory on the host: `/home/daytona/.kamal/ssl`
+2. Uploads `cert.pem` with mode `0644`
+3. Uploads `key.pem` with mode `0644`
+4. Configures the proxy to use these certificates
+
+From `lib/kamal/cli/app/ssl_certificates.rb:16-19`:
+
+```ruby
+upload!(StringIO.new(cert_content), role.proxy.host_tls_cert, mode: "0644")
+upload!(StringIO.new(key_content), role.proxy.host_tls_key, mode: "0644")
+```
+
+## Cloudflare Integration
+
+### Full SSL Mode
+
+When using Cloudflare with Kamal:
+
+<CodeGroup>
+
+```yaml Recommended: Full SSL
+proxy:
+  ssl: true
+  host: app.example.com
+```
+
+```txt Cloudflare Settings
+SSL/TLS Encryption Mode: Full
+- Encrypts traffic between Cloudflare and your origin server
+- Uses Let's Encrypt certificate on your server
+- Cloudflare handles client SSL
+```
+
+</CodeGroup>
+
+<Warning>
+In Cloudflare's SSL/TLS settings, set encryption mode to "Full" to enable Cloudflare-to-app encryption. "Flexible" mode will cause connection errors.
+</Warning>
+
+### Origin Certificates
+
+Use Cloudflare Origin Certificates for enhanced security:
+
+<Steps>
+
+<Step title="Generate Certificate">
+In Cloudflare dashboard:
+- Go to SSL/TLS > Origin Server
+- Create Certificate
+- Save both certificate and private key
+</Step>
+
+<Step title="Configure Kamal">
+```yaml
+proxy:
+  ssl:
+    certificate_pem: CLOUDFLARE_ORIGIN_CERT
+    private_key_pem: CLOUDFLARE_ORIGIN_KEY
+  host: app.example.com
+```
+</Step>
+
+<Step title="Store Secrets">
+```bash
+# .kamal/secrets
+CLOUDFLARE_ORIGIN_CERT=$(cat cloudflare-cert.pem)
+CLOUDFLARE_ORIGIN_KEY=$(cat cloudflare-key.pem)
+```
+</Step>
+
+</Steps>
+
+## Per-Role SSL Configuration
+
+### Different Certificates per Role
+
+Configure SSL differently for each server role:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    proxy:
+      ssl: true
+      host: app.example.com
+  
+  api:
+    hosts:
+      - 192.168.0.3
+    proxy:
+      ssl: true
+      host: api.example.com
+```
+
+### Disable SSL for Specific Roles
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy:
+      ssl: true
+      host: app.example.com
+  
+  internal:
+    hosts:
+      - 192.168.0.2
+    proxy:
+      ssl: false  # No SSL for internal services
+```
+
+## Advanced SSL Configuration
+
+### Custom App Port
+
+If your app listens on a non-standard port:
+
+```yaml
+proxy:
+  ssl: true
+  host: app.example.com
+  app_port: 3000  # Default: 80
+```
+
+The proxy will forward HTTPS traffic to your app on port 3000.
+
+### Health Check Path
+
+Configure health checks for SSL endpoints:
+
+```yaml
+proxy:
+  ssl: true
+  host: app.example.com
+  healthcheck:
+    path: /health
+    interval: 10s
+    timeout: 5s
+```
+
+### Response Timeout
+
+Set timeout for backend responses:
+
+```yaml
+proxy:
+  ssl: true
+  host: app.example.com
+  response_timeout: 60s  # Default: 30s
+```
+
+## Load Balancer Setup
+
+### SSL Termination at Load Balancer
+
+When using multiple servers behind a load balancer:
+
+<CodeGroup>
+
+```yaml Load Balancer Terminates SSL
+# Remove proxy SSL config when load balancer handles it
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+    - 192.168.0.3
+
+# No proxy configuration needed
+```
+
+```yaml SSL Between Load Balancer and Servers
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+
+proxy:
+  ssl: true
+  host: internal.example.com
+```
+
+</CodeGroup>
+
+<Warning>
+Remove the proxy SSL section when using multiple web servers with a load balancer that terminates SSL. Otherwise, each server will try to obtain its own Let's Encrypt certificate, which may hit rate limits.
+</Warning>
+
+## Certificate Management
+
+### Check Certificate Status
+
+View proxy details including certificate info:
+
+```bash
+kamal proxy details
+```
+
+### Force Certificate Renewal
+
+Let's Encrypt certificates auto-renew, but you can force a renewal:
+
+```bash
+kamal proxy reboot
+```
+
+This restarts the proxy and triggers certificate checks.
+
+### Certificate Storage
+
+Certificates are stored on the host at:
+
+```
+~/.kamal/ssl/cert.pem
+~/.kamal/ssl/key.pem
+```
+
+These are automatically managed by kamal-proxy for Let's Encrypt certificates.
+
+## Troubleshooting
+
+<Accordion title="Let's Encrypt rate limit errors">
+Let's Encrypt has rate limits (50 certificates per domain per week). If you hit this:
+
+- Use the staging environment for testing
+- Ensure you're not repeatedly creating certificates
+- Consider using a wildcard certificate
+</Accordion>
+
+<Accordion title="Certificate validation fails">
+Common causes:
+- DNS not pointing to your server
+- Firewall blocking port 80 (required for validation)
+- Server not publicly accessible
+
+Ensure:
+```bash
+# Port 80 and 443 are open
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+```
+</Accordion>
+
+<Accordion title="Custom certificate not working">
+Verify:
+- Certificate includes full chain (intermediate certificates)
+- Private key matches the certificate
+- File paths in secrets are correct
+- Secrets are properly loaded:
+```bash
+kamal secrets print
+```
+</Accordion>
+
+<Accordion title="Mixed content warnings">
+If your app loads HTTP resources over HTTPS:
+- Update all resource URLs to HTTPS
+- Use protocol-relative URLs: `//example.com/script.js`
+- Configure Content Security Policy headers
+</Accordion>
+
+## Security Best Practices
+
+1. **Always use SSL in production** - Protect user data and enable modern browser features
+2. **Keep private keys secure** - Never commit private keys to version control
+3. **Use strong ciphers** - kamal-proxy uses secure defaults
+4. **Enable HSTS** - Consider adding HTTP Strict Transport Security headers
+5. **Monitor expiration** - Set up alerts for certificate expiration (if using custom certs)
+6. **Rotate certificates** - Regularly update custom certificates
+
+## Example Configurations
+
+<CodeGroup>
+
+```yaml Simple App with Let's Encrypt
+service: my-app
+image: user/my-app
+
+servers:
+  web:
+    - 192.168.0.1
+
+proxy:
+  ssl: true
+  host: myapp.com
+```
+
+```yaml Multi-Domain with Custom Certificates
+service: my-app
+image: user/my-app
+
+servers:
+  web:
+    - 192.168.0.1
+
+proxy:
+  ssl:
+    certificate_pem: CUSTOM_SSL_CERT
+    private_key_pem: CUSTOM_SSL_KEY
+  hosts:
+    - myapp.com
+    - www.myapp.com
+  app_port: 3000
+```
+
+```yaml Multiple Roles with Different Domains
+service: my-app
+image: user/my-app
+
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy:
+      ssl: true
+      host: myapp.com
+  
+  api:
+    hosts:
+      - 192.168.0.2
+    proxy:
+      ssl: true
+      host: api.myapp.com
+      app_port: 4000
+```
+
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multiple Servers" icon="server" href="/guides/multiple-servers">
+    Scale across multiple servers
+  </Card>
+  <Card title="Custom Commands" icon="terminal" href="/guides/custom-commands">
+    Create deployment aliases
+  </Card>
+</CardGroup>

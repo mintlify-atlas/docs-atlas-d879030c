@@ -1,0 +1,141 @@
+---
+title: kamal app boot
+description: Boot or reboot your application on servers with zero downtime
+---
+
+## Overview
+
+The `kamal app boot` command boots your application on servers, or reboots it if it's already running. This is the primary command for getting your app running with the latest version.
+
+## Usage
+
+```bash
+kamal app boot [OPTIONS]
+```
+
+## How It Works
+
+The boot process follows these steps:
+
+1. **Prepares assets** - Error pages, assets, and SSL certificates are copied to all hosts
+2. **Boots in groups** - Hosts are booted in groups (if limits are configured) to ensure gradual rollout
+3. **Health checks** - Primary hosts open the barrier after successful health checks
+4. **Runs hooks** - Executes `pre-app-boot` and `post-app-boot` hooks for each host group
+5. **Tags image** - Once all hosts are running, tags the image as latest
+
+## Options
+
+The `boot` command inherits global options from the base CLI:
+
+<ParamField path="--version" type="string">
+  Run commands against a specific app version instead of the latest
+  
+  ```bash
+  kamal app boot --version v1.2.3
+  ```
+</ParamField>
+
+<ParamField path="--hosts" type="string">
+  Run commands on specific hosts instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app boot --hosts web1.example.com,web2.example.com
+  kamal app boot --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Run commands on specific roles instead of all (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app boot --roles web
+  kamal app boot --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean">
+  Run commands only on the primary host
+  
+  ```bash
+  kamal app boot --primary
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app boot --verbose
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal logging output
+  
+  ```bash
+  kamal app boot --quiet
+  ```
+</ParamField>
+
+<ParamField path="--skip-hooks" type="boolean" default="false">
+  Don't run pre-app-boot and post-app-boot hooks
+  
+  ```bash
+  kamal app boot --skip-hooks
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Basic boot
+kamal app boot
+```
+
+```bash Boot specific version
+kamal app boot --version v2.1.0
+```
+
+```bash Boot on specific hosts
+kamal app boot --hosts web1.example.com,web2.example.com
+```
+
+```bash Boot specific role
+kamal app boot --roles worker
+```
+
+```bash Boot with verbose logging
+kamal app boot --verbose
+```
+
+```bash Boot without hooks
+kamal app boot --skip-hooks
+```
+
+</CodeGroup>
+
+## Behavior
+
+<Note>
+  If the app is already running, `boot` will reboot it with the new version. This command handles the full deployment lifecycle including health checks and gradual rollout.
+</Note>
+
+<Tip>
+  The boot command respects your `boot.limit` configuration to control how many hosts are booted simultaneously, enabling gradual rollouts.
+</Tip>
+
+## Hooks
+
+The boot command triggers these hooks:
+
+- **pre-app-boot** - Runs before booting each host group
+- **post-app-boot** - Runs after booting each host group
+
+Use `--skip-hooks` to disable hook execution.
+
+## Related Commands
+
+- [`kamal app start`](/commands/app/start) - Start existing stopped containers
+- [`kamal app stop`](/commands/app/stop) - Stop running containers
+- [`kamal deploy`](/commands/deploy) - Full deployment including build and boot

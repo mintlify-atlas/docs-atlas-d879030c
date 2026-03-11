@@ -1,97 +1,134 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Kamal Documentation"
+description: "Deploy web apps anywhere with zero downtime using Docker containers"
 ---
 
-## Setting up
+<img
+  className="block dark:hidden"
+  src="https://media.brand.dev/a04bfd90-fe11-4457-a8dd-7fbd71a0360b.svg"
+  alt="Kamal Logo"
+  width="200"
+/>
+<img
+  className="hidden dark:block"
+  src="https://media.brand.dev/a04bfd90-fe11-4457-a8dd-7fbd71a0360b.svg"
+  alt="Kamal Logo"
+  width="200"
+/>
 
-Get your documentation site up and running in minutes.
+# Deploy web apps anywhere
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Kamal lets you deploy web applications to any server running Docker with zero downtime. Built by Basecamp, Kamal uses [kamal-proxy](https://github.com/basecamp/kamal-proxy) to seamlessly switch requests between containers during deployments.
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get your first deployment running in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Install Kamal on your local machine
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn how to configure your deployments
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Command Reference" icon="terminal" href="/commands/deploy">
+    Explore all available commands
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key Features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Zero-Downtime Deployments" icon="arrows-rotate">
+    Deploy new versions without interrupting user traffic using kamal-proxy's seamless container switching
+  </Card>
+  <Card title="Multi-Server Support" icon="server">
+    Orchestrate deployments across multiple servers with SSH-based command execution
+  </Card>
+  <Card title="SSL Certificates" icon="lock">
+    Automated SSL certificate management via Let's Encrypt for secure HTTPS connections
+  </Card>
+  <Card title="Rolling Deployments" icon="gauge-high">
+    Control deployment speed with configurable batch sizes and wait times between server groups
+  </Card>
+  <Card title="Accessory Services" icon="database">
+    Manage auxiliary services like databases and Redis alongside your application
+  </Card>
+  <Card title="Remote Builder" icon="hammer">
+    Build Docker images remotely for multi-architecture deployments
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## How It Works
 
-## Need inspiration?
+Kamal orchestrates Docker-based deployments through a simple workflow:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Configure your deployment">
+    Create a `config/deploy.yml` file defining your application, servers, and deployment settings
+  </Step>
+  <Step title="Build and push">
+    Kamal builds your Docker image and pushes it to your container registry
+  </Step>
+  <Step title="Deploy with zero downtime">
+    Kamal deploys containers to your servers and uses kamal-proxy to route traffic seamlessly
+  </Step>
+</Steps>
+
+## Quick Example
+
+Deploy a containerized web application in just a few steps:
+
+```bash Terminal
+# Install Kamal
+gem install kamal
+
+# Initialize configuration
+kamal init
+
+# Set up servers and deploy
+kamal setup
+```
+
+Your application is now running with zero-downtime deployment capabilities!
+
+## What You Can Deploy
+
+Kamal works with any application that can be containerized with Docker:
+
+- Ruby on Rails applications
+- Node.js and Express servers
+- Python Django or Flask apps
+- Go web services
+- Static sites with Nginx
+- Any other Docker-compatible application
+
+## Popular Use Cases
+
+<CardGroup cols={3}>
+  <Card title="Web Applications" icon="browser">
+    Deploy full-stack web apps to bare metal or cloud VMs
+  </Card>
+  <Card title="API Services" icon="code">
+    Run REST or GraphQL APIs across multiple servers
+  </Card>
+  <Card title="Background Workers" icon="gears">
+    Deploy job processors and background task runners
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Install Kamal and prepare your environment
+  </Card>
+  <Card title="Quick Start Tutorial" icon="play" href="/quickstart">
+    Deploy your first application with Kamal
+  </Card>
+  <Card title="Configuration Overview" icon="file-code" href="/configuration/overview">
+    Understand the deployment configuration file
+  </Card>
+  <Card title="Core Commands" icon="terminal" href="/commands/setup">
+    Learn essential Kamal commands
+  </Card>
+</CardGroup>

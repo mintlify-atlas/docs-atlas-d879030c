@@ -1,0 +1,616 @@
+---
+title: Rolling Deployments
+description: Configure rolling deployment strategies with batch limits and wait times
+---
+
+Rolling deployments update your servers in batches rather than all at once. This minimizes risk by allowing you to detect issues before they affect your entire infrastructure.
+
+## Why Rolling Deployments?
+
+Rolling deployments provide:
+
+- **Reduced Risk**: Issues affect only a subset of servers initially
+- **Early Detection**: Monitor early batches before proceeding
+- **Graceful Degradation**: Maintain capacity if problems occur
+- **Controlled Rollout**: Perfect for high-traffic production environments
+
+<Info>
+  Even with rolling deployments, each server maintains zero-downtime using kamal-proxy.
+</Info>
+
+## Configuration
+
+Configure rolling deployments in `config/deploy.yml`:
+
+```yaml config/deploy.yml
+boot:
+  # Deploy to 2 servers at a time
+  limit: 2
+  
+  # Wait 10 seconds between batches
+  wait: 10
+```
+
+### Limit Options
+
+#### Fixed Number
+
+```yaml
+boot:
+  limit: 5  # Deploy to 5 servers at a time
+```
+
+#### Percentage-Based
+
+```yaml
+boot:
+  limit: "25%"  # Deploy to 25% of servers at a time
+```
+
+The percentage is calculated from your total host count:
+
+```ruby
+# From boot.rb:12-20
+def limit
+  limit = boot_config["limit"]
+  
+  if limit.to_s.end_with?("%")
+    [ host_count * limit.to_i / 100, 1 ].max
+  else
+    limit
+  end
+end
+```
+
+<Note>
+  Percentage limits always round to at least 1 server, so even "10%" of 5 servers will deploy to 1 server per batch.
+</Note>
+
+## How It Works
+
+Rolling deployment implementation from `app.rb:356-358` and `app.rb:22-32`:
+
+```ruby
+def host_boot_groups
+  KAMAL.config.boot.limit ? 
+    KAMAL.app_hosts.each_slice(KAMAL.config.boot.limit).to_a : 
+    [ KAMAL.app_hosts ]
+end
+
+def boot
+  # ... prepare assets and certificates ...
+  
+  barrier = Kamal::Cli::Healthcheck::Barrier.new
+  
+  # Boot servers in groups
+  host_boot_groups.each do |hosts|
+    host_list = Array(hosts).join(",")
+    run_hook "pre-app-boot", hosts: host_list
+    
+    on_roles(KAMAL.roles, hosts: hosts, parallel: KAMAL.config.boot.parallel_roles) do |host, role|
+      Kamal::Cli::App::Boot.new(host, role, self, version, barrier).run
+    end
+    
+    run_hook "post-app-boot", hosts: host_list
+    
+    # Wait between batches
+    sleep KAMAL.config.boot.wait if KAMAL.config.boot.wait
+  end
+end
+```
+
+<Steps>
+  <Step title="Divide Hosts">
+    Servers are divided into batches based on the `limit` configuration.
+  </Step>
+  
+  <Step title="Deploy First Batch">
+    The first batch of servers is updated:
+    - New containers start
+    - Health checks pass
+    - Traffic switches to new containers
+    - Old containers drain and stop
+  </Step>
+  
+  <Step title="Wait Period">
+    Kamal waits for the configured `wait` time, allowing you to monitor the batch.
+  </Step>
+  
+  <Step title="Continue or Abort">
+    If issues are detected, you can abort before the next batch. Otherwise, deployment continues automatically.
+  </Step>
+  
+  <Step title="Repeat">
+    Steps 2-4 repeat until all servers are updated.
+  </Step>
+</Steps>
+
+## Deployment Examples
+
+### Conservative Production Rollout
+
+```yaml config/deploy.yml
+boot:
+  limit: 1        # One server at a time
+  wait: 30        # 30 seconds to monitor each
+```
+
+With 10 servers, this takes ~5 minutes but provides maximum safety.
+
+### Balanced Rollout
+
+```yaml config/deploy.yml
+boot:
+  limit: "20%"    # 20% of fleet at a time
+  wait: 15        # 15 seconds between batches
+```
+
+With 20 servers, this deploys 4 at a time in 5 batches.
+
+### Fast Rollout
+
+```yaml config/deploy.yml
+boot:
+  limit: "50%"    # Half the fleet at a time
+  wait: 5         # Minimal wait
+```
+
+Quick deployments with reasonable safety margin.
+
+### Canary Deployment
+
+```yaml config/deploy.yml
+boot:
+  limit: 1        # Single canary server first
+  wait: 300       # Wait 5 minutes to monitor
+```
+
+Deploy to one server, monitor extensively, then continue.
+
+## Monitoring Rolling Deployments
+
+### Watch Progress
+
+In separate terminals:
+
+<CodeGroup>
+```bash Terminal 1: Deployment
+kamal deploy
+```
+
+```bash Terminal 2: Live Logs
+kamal app logs --follow
+```
+
+```bash Terminal 3: Container Status
+watch -n 2 'kamal app containers'
+```
+
+```bash Terminal 4: Metrics/Monitoring
+# Your monitoring dashboard
+open https://monitoring.example.com
+```
+</CodeGroup>
+
+### Automated Monitoring
+
+Use deployment hooks to send metrics:
+
+```bash .kamal/hooks/post-app-boot
+#!/bin/sh
+
+# $KAMAL_HOSTS contains comma-separated list of hosts just booted
+
+for host in ${KAMAL_HOSTS//,/ }; do
+  echo "Checking metrics for $host..."
+  
+  # Query your metrics endpoint
+  error_rate=$(curl -s "https://$host/metrics" | jq '.error_rate')
+  
+  if (( $(echo "$error_rate > 0.05" | bc -l) )); then
+    echo "ERROR: High error rate ($error_rate) on $host!"
+    exit 1  # Abort deployment
+  fi
+  
+  echo "$host is healthy (error rate: $error_rate)"
+done
+```
+
+<Warning>
+  If a deployment hook exits with non-zero status, Kamal aborts the deployment.
+</Warning>
+
+## Aborting Mid-Deployment
+
+If you notice issues during a rolling deployment:
+
+### Stop Immediately
+
+```bash
+# In the terminal running kamal deploy, press Ctrl+C
+^C
+Aborted by user
+```
+
+Servers already updated will stay on the new version. Remaining servers stay on the old version.
+
+### Assess Damage
+
+```bash
+# Check which servers were updated
+kamal app version
+
+# Look at logs from updated servers
+kamal app logs --hosts=192.168.0.1,192.168.0.2
+```
+
+### Options After Abort
+
+<Steps>
+  <Step title="Rollback Updated Servers">
+    ```bash
+    # Rollback servers that got the bad version
+    kamal app boot --version=PREVIOUS_VERSION --hosts=192.168.0.1,192.168.0.2
+    ```
+  </Step>
+  
+  <Step title="Fix and Redeploy">
+    ```bash
+    # Fix the issue in code
+    git commit -am "Fix deployment issue"
+    
+    # Deploy again
+    kamal deploy
+    ```
+  </Step>
+  
+  <Step title="Continue Deployment">
+    If the issue was a false alarm:
+    ```bash
+    # Note: No built-in "continue" command
+    # Redeploy will update remaining servers
+    kamal deploy
+    ```
+  </Step>
+</Steps>
+
+## Multi-Role Deployments
+
+With multiple roles, control deployment order:
+
+```yaml config/deploy.yml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+      - 192.168.0.3
+  workers:
+    hosts:
+      - 192.168.0.4
+      - 192.168.0.5
+    cmd: bundle exec sidekiq
+
+boot:
+  limit: 1
+  wait: 30
+  
+  # Deploy roles in parallel or sequence
+  parallel_roles: false  # Deploy web first, then workers
+```
+
+### Parallel Role Deployment
+
+```yaml
+boot:
+  parallel_roles: true  # Deploy all roles simultaneously
+  limit: "25%"
+  wait: 15
+```
+
+From `boot.rb:26-28` and `app.rb:26-28`:
+
+```ruby
+def parallel_roles
+  boot_config["parallel_roles"]
+end
+
+# Used during boot:
+on_roles(KAMAL.roles, hosts: hosts, parallel: KAMAL.config.boot.parallel_roles) do |host, role|
+  Kamal::Cli::App::Boot.new(host, role, self, version, barrier).run
+end
+```
+
+## Large Fleet Best Practices
+
+### Tiered Rollout
+
+For large deployments (50+ servers), use a tiered approach:
+
+```yaml config/deploy.yml
+# Phase 1: Initial canary (manual)
+boot:
+  limit: 1
+  wait: 600  # 10 minutes
+```
+
+After canary succeeds, update config:
+
+```yaml config/deploy.yml
+# Phase 2: Broader rollout
+boot:
+  limit: "10%"
+  wait: 60
+```
+
+### Geographic Rollout
+
+Deploy region by region:
+
+<CodeGroup>
+```yaml US-East
+servers:
+  web:
+    hosts:
+      - us-east-1.example.com
+      - us-east-2.example.com
+
+boot:
+  limit: 1
+  wait: 30
+```
+
+```yaml US-West (after US-East succeeds)
+servers:
+  web:
+    hosts:
+      - us-west-1.example.com
+      - us-west-2.example.com
+
+boot:
+  limit: 1
+  wait: 30
+```
+</CodeGroup>
+
+## Healthcheck Integration
+
+Rolling deployments work in conjunction with health checks:
+
+```yaml config/deploy.yml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    healthcheck:
+      path: /health
+      interval: 5s
+      timeout: 3s
+      max_attempts: 20  # Wait up to 100s for health
+
+boot:
+  limit: 1
+  wait: 60  # Additional observation time after health check passes
+```
+
+The barrier waits for health checks before marking a batch as complete.
+
+## Deployment Timing
+
+Calculate total deployment time:
+
+```
+Total Time = (Number of Batches × Wait Time) + (Deployment Time per Batch)
+```
+
+Examples:
+
+| Servers | Limit | Wait | Batches | Deployment/Batch | Total Time |
+|---------|-------|------|---------|------------------|------------|
+| 10      | 2     | 30s  | 5       | ~45s             | ~6 min     |
+| 20      | "25%" | 15s  | 4       | ~60s             | ~5 min     |
+| 50      | 5     | 20s  | 10      | ~50s             | ~12 min    |
+| 100     | "10%" | 30s  | 10      | ~90s             | ~20 min    |
+
+<Info>
+  Deployment time per batch varies based on image size, network speed, and application startup time.
+</Info>
+
+## Testing Rolling Deployments
+
+### Staging Environment
+
+Test your configuration in staging:
+
+```yaml config/deploy.staging.yml
+boot:
+  limit: 1
+  wait: 10  # Shorter wait in staging
+```
+
+```bash
+kamal deploy --destination staging
+```
+
+### Simulate Issues
+
+Test your abort procedures:
+
+```bash
+# Terminal 1: Start deployment
+kamal deploy
+
+# Terminal 2: After first batch, simulate issue
+sleep 15
+echo "Simulating problem..."
+# Press Ctrl+C in Terminal 1
+```
+
+## Advanced: Custom Batch Logic
+
+For complex scenarios, you might need custom batching:
+
+```yaml config/deploy.yml
+# Deploy to primary servers first
+servers:
+  web_primary:
+    hosts:
+      - 192.168.0.1  # Primary
+  web_secondary:
+    hosts:
+      - 192.168.0.2
+      - 192.168.0.3
+      - 192.168.0.4
+
+boot:
+  limit: 1
+  wait: 120  # Long wait after primary
+```
+
+Deploy web_primary first, then web_secondary:
+
+```bash
+kamal deploy --roles=web_primary
+# Monitor...
+kamal deploy --roles=web_secondary
+```
+
+## Comparison with Other Strategies
+
+### All-at-Once vs Rolling
+
+| Aspect | All-at-Once | Rolling |
+|--------|-------------|----------|
+| Speed | ⚡ Fast (1-2 min) | 🐢 Slower (5-20 min) |
+| Risk | ⚠️ High | ✅ Low |
+| Rollback Need | 🔄 Full rollback | 🔄 Partial rollback |
+| Capacity | ⚠️ Brief reduction | ✅ Maintained |
+| Best For | Development | Production |
+
+### Canary vs Rolling
+
+**Canary**: Deploy to tiny subset (1-5%), monitor extensively, then all-at-once to rest
+
+```yaml
+boot:
+  limit: 1
+  wait: 3600  # 1 hour canary period
+```
+
+**Rolling**: Gradual rollout in multiple batches
+
+```yaml
+boot:
+  limit: "20%"
+  wait: 60  # Short wait between batches
+```
+
+<Info>
+  You can combine strategies: 1 server canary for 10 minutes, then 20% rolling deployments.
+</Info>
+
+## Troubleshooting
+
+### Deployment Too Slow
+
+```yaml
+# Increase batch size and reduce wait
+boot:
+  limit: "33%"  # Larger batches
+  wait: 10      # Shorter wait
+```
+
+### Can't Detect Issues in Time
+
+```yaml
+# Smaller batches with longer observation
+boot:
+  limit: 1      # Smallest possible batch
+  wait: 120     # 2 minutes to detect issues
+```
+
+### Inconsistent Deployments
+
+If some servers succeed and others fail:
+
+```bash
+# Check which servers are on which version
+kamal app version
+
+# Review logs from failed servers
+kamal app logs --hosts=FAILED_SERVERS
+
+# Manually deploy to failed servers
+kamal app boot --hosts=FAILED_SERVERS
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Match Wait Time to Detection Latency">
+    If your monitoring has 30-second delay, use at least `wait: 45`:
+    
+    ```yaml
+    boot:
+      wait: 45  # Monitoring delay (30s) + buffer (15s)
+    ```
+  </Step>
+  
+  <Step title="Start Conservative">
+    Begin with small batches:
+    
+    ```yaml
+    boot:
+      limit: 1
+      wait: 60
+    ```
+    
+    Increase as confidence grows:
+    
+    ```yaml
+    boot:
+      limit: "25%"
+      wait: 30
+    ```
+  </Step>
+  
+  <Step title="Use Hooks for Validation">
+    Automate checks in post-boot hooks:
+    
+    ```bash
+    #!/bin/sh
+    # .kamal/hooks/post-app-boot
+    
+    # Run smoke tests
+    curl -f "https://$KAMAL_HOSTS/health" || exit 1
+    
+    # Check error rates
+    check-metrics || exit 1
+    ```
+  </Step>
+  
+  <Step title="Document Your Strategy">
+    Keep deployment runbooks:
+    
+    ```markdown
+    # Deployment Procedure
+    
+    ## Standard Deployment
+    - Limit: 25% (5 servers per batch)
+    - Wait: 30s between batches
+    - Total Time: ~4 minutes
+    
+    ## High-Risk Deployment
+    - Limit: 1 server
+    - Wait: 300s (5 minutes)
+    - Requires manual approval after canary
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+- Learn about [zero-downtime deployments](/deployment/zero-downtime)
+- Set up [rollback procedures](/deployment/rollback)
+- Configure [deployment hooks](/configuration/hooks) for validation

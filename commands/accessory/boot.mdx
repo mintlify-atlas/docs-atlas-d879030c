@@ -1,0 +1,249 @@
+---
+title: kamal accessory boot
+description: Boot new accessory service on host
+---
+
+The `kamal accessory boot` command starts a new accessory container on the configured host(s). It handles directory creation, file uploads, environment setup, and container startup.
+
+## Basic Usage
+
+```bash
+kamal accessory boot <NAME>
+```
+
+### Boot a Database Accessory
+
+```bash
+kamal accessory boot mysql
+```
+
+### Boot All Accessories
+
+```bash
+kamal accessory boot all
+```
+
+<Note>
+Using `all` as the accessory name will boot all accessories defined in your configuration.
+</Note>
+
+## What Boot Does
+
+The boot command performs these operations in sequence:
+
+<Steps>
+  <Step title="Prepare Registry & Network">
+    Logs into the container registry and ensures the Docker network exists.
+  </Step>
+  
+  <Step title="Create Directories">
+    Creates all directories specified in the accessory configuration on the host.
+  </Step>
+  
+  <Step title="Upload Files">
+    Uploads files from your local machine to the host with the correct permissions.
+  </Step>
+  
+  <Step title="Upload Environment">
+    Creates the environment file with secrets on the host.
+  </Step>
+  
+  <Step title="Start Container">
+    Runs the Docker container with all configured options.
+  </Step>
+  
+  <Step title="Configure Proxy (if applicable)">
+    If the accessory uses kamal-proxy, configures the proxy routes.
+  </Step>
+</Steps>
+
+## Boot Behavior
+
+### Skip Already Running Containers
+
+If a container already exists on a host, boot will skip that host:
+
+```bash
+kamal accessory boot mysql
+# Output: Skipping booting `mysql` on 192.168.0.10, a container already exists
+```
+
+<Info>
+To replace an existing container, use [`kamal accessory reboot`](/commands/accessory/reboot) instead.
+</Info>
+
+### Multiple Hosts
+
+When booting on multiple hosts, Kamal processes each host in parallel:
+
+<CodeGroup>
+```yaml Config
+accessories:
+  redis:
+    image: redis:7
+    hosts:
+      - 192.168.0.11
+      - 192.168.0.12
+    directories:
+      - redis-data:/data
+```
+
+```bash Command
+kamal accessory boot redis
+# Boots on both hosts simultaneously
+```
+</CodeGroup>
+
+## Examples
+
+### Boot MySQL Database
+
+<Tabs>
+  <Tab title="Configuration">
+    ```yaml deploy.yml
+    accessories:
+      mysql:
+        image: mysql:8.0
+        host: 192.168.0.10
+        port: "127.0.0.1:3306:3306"
+        
+        env:
+          clear:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_DATABASE: myapp_production
+          secret:
+            - MYSQL_ROOT_PASSWORD
+        
+        directories:
+          - mysql-data:/var/lib/mysql
+    ```
+  </Tab>
+  
+  <Tab title="Boot Command">
+    ```bash
+    kamal accessory boot mysql
+    ```
+    
+    Output:
+    ```
+    INFO [abc123] Running docker login on 192.168.0.10...
+    INFO [abc123] Running docker network create kamal on 192.168.0.10...
+    INFO [abc123] Creating directories for mysql accessory on 192.168.0.10...
+    INFO [abc123] Running docker run mysql:8.0 on 192.168.0.10...
+    ```
+  </Tab>
+</Tabs>
+
+### Boot Redis with Files
+
+<Tabs>
+  <Tab title="Configuration">
+    ```yaml deploy.yml
+    accessories:
+      redis:
+        image: redis:7-alpine
+        host: 192.168.0.11
+        
+        files:
+          - config/redis.conf:/etc/redis/redis.conf
+        
+        directories:
+          - redis-data:/data
+        
+        cmd: redis-server /etc/redis/redis.conf
+    ```
+  </Tab>
+  
+  <Tab title="Boot Command">
+    ```bash
+    kamal accessory boot redis
+    ```
+    
+    The command will:
+    1. Upload `config/redis.conf` to the host
+    2. Create the `redis-data` directory
+    3. Start Redis with the custom configuration
+  </Tab>
+</Tabs>
+
+### Boot Accessory Behind Proxy
+
+<CodeGroup>
+```yaml Configuration
+accessories:
+  adminer:
+    image: adminer:latest
+    host: 192.168.0.10
+    
+    proxy:
+      host: db-admin.example.com
+      ssl: true
+      app_port: 8080
+```
+
+```bash Command
+kamal accessory boot adminer
+# Starts container and configures kamal-proxy
+```
+</CodeGroup>
+
+<Note>
+When using proxy configuration, the boot command automatically configures kamal-proxy to route traffic to the accessory.
+</Note>
+
+## Implementation Details
+
+From `accessory.rb:5-41`:
+
+```ruby
+def boot(name, prepare: true)
+  with_lock do
+    if name == "all"
+      KAMAL.accessory_names.each { |accessory_name| boot(accessory_name) }
+    else
+      prepare(name) if prepare
+      
+      with_accessory(name) do |accessory, hosts|
+        # Check for existing containers
+        booted_hosts = Concurrent::Array.new
+        on(hosts) do |host|
+          booted_hosts << host.to_s if capture_with_info(*accessory.info(all: true, quiet: true)).strip.presence
+        end
+        
+        if booted_hosts.any?
+          say "Skipping booting `#{name}` on #{booted_hosts.sort.join(", ")}, a container already exists", :yellow
+          hosts -= booted_hosts
+        end
+        
+        directories(name)
+        upload(name)
+        
+        on(hosts) do |host|
+          execute *KAMAL.auditor.record("Booted #{name} accessory"), verbosity: :debug
+          execute *accessory.ensure_env_directory
+          upload! accessory.secrets_io, accessory.secrets_path, mode: "0600"
+          execute *accessory.run(host: host)
+          
+          if accessory.running_proxy?
+            target = capture_with_info(*accessory.container_id_for(container_name: accessory.service_name, only_running: true)).strip
+            execute *accessory.deploy(target: target)
+          end
+        end
+      end
+    end
+  end
+end
+```
+
+## Related Commands
+
+- [`kamal accessory reboot`](/commands/accessory/reboot) - Replace existing container with new one
+- [`kamal accessory start`](/commands/accessory/start) - Start stopped container
+- [`kamal accessory stop`](/commands/accessory/stop) - Stop running container
+- [`kamal accessory details`](/commands/accessory/details) - View container details
+- [`kamal accessory remove`](/commands/accessory/remove) - Remove accessory completely
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories in deploy.yml
+- [Accessories Setup Guide](/guides/accessories-setup) - Step-by-step setup guide

@@ -1,0 +1,256 @@
+---
+title: kamal app containers
+description: List all app containers running on servers
+---
+
+## Overview
+
+The `kamal app containers` command lists all app containers running on your servers. It provides a quick overview of which containers are active across your infrastructure.
+
+## Usage
+
+```bash
+kamal app containers [OPTIONS]
+```
+
+## Output
+
+The command displays a list of Docker containers for your app on each host, showing:
+
+- Container ID
+- Image name and version
+- Container status
+- Creation time
+- Container name
+
+## Options
+
+<ParamField path="--hosts" type="string">
+  List containers from specific hosts (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app containers --hosts web1.example.com,web2.example.com
+  kamal app containers --hosts "web*.example.com"
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  List containers from specific roles (comma-separated, supports wildcards)
+  
+  ```bash
+  kamal app containers --roles web
+  kamal app containers --roles "web,worker"
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean">
+  List containers only from the primary host
+  
+  ```bash
+  kamal app containers --primary
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Minimal output without host labels
+  
+  ```bash
+  kamal app containers --quiet
+  ```
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable detailed logging output
+  
+  ```bash
+  kamal app containers --verbose
+  ```
+</ParamField>
+
+## Examples
+
+<CodeGroup>
+
+```bash List all containers
+kamal app containers
+```
+
+```bash Containers on specific host
+kamal app containers --hosts web1.example.com
+```
+
+```bash Containers for specific role
+kamal app containers --roles worker
+```
+
+```bash Primary host only
+kamal app containers --primary
+```
+
+```bash Quiet output
+kamal app containers --quiet
+```
+
+</CodeGroup>
+
+## Sample Output
+
+```bash
+[web1.example.com]
+CONTAINER ID   IMAGE                                    STATUS         NAMES
+a1b2c3d4e5f6   registry.example.com/myapp:v1.2.3       Up 2 hours     myapp-web-v1.2.3
+b2c3d4e5f6a1   registry.example.com/myapp:v1.2.2       Up 5 hours     myapp-web-v1.2.2
+
+[web2.example.com]
+CONTAINER ID   IMAGE                                    STATUS         NAMES
+c3d4e5f6a1b2   registry.example.com/myapp:v1.2.3       Up 2 hours     myapp-web-v1.2.3
+```
+
+## Understanding the Output
+
+Each server's output shows:
+
+<Tabs>
+  <Tab title="Container ID">
+    Short Docker container identifier (first 12 characters of full ID).
+    
+    Use this with Docker commands:
+    ```bash
+    docker logs a1b2c3d4e5f6
+    docker inspect a1b2c3d4e5f6
+    ```
+  </Tab>
+  
+  <Tab title="Image">
+    The full image name including:
+    - Registry URL
+    - Repository name
+    - Image tag/version
+    
+    Example: `registry.example.com/myapp:v1.2.3`
+  </Tab>
+  
+  <Tab title="Status">
+    Container state and uptime:
+    - `Up 2 hours` - Running for 2 hours
+    - `Exited (0) 5 minutes ago` - Stopped 5 minutes ago
+    - `Restarting` - Currently restarting
+  </Tab>
+  
+  <Tab title="Names">
+    Container name assigned by Kamal, typically:
+    `{app}-{role}-{version}`
+    
+    Example: `myapp-web-v1.2.3`
+  </Tab>
+</Tabs>
+
+## Common Use Cases
+
+### Quick Status Check
+
+Verify containers are running across all hosts:
+
+```bash
+kamal app containers
+```
+
+### Post-Deployment Verification
+
+Check that new version is deployed:
+
+```bash
+# After deploying v1.2.3
+kamal app containers
+
+# Look for containers with v1.2.3 tag
+```
+
+### Identify Stale Containers
+
+Find old versions still running:
+
+```bash
+kamal app containers
+
+# Or use the dedicated command
+kamal app stale_containers
+```
+
+### Role-Specific Checks
+
+Verify specific role deployments:
+
+```bash
+# Check worker containers
+kamal app containers --roles worker
+
+# Check web containers
+kamal app containers --roles web
+```
+
+## Filtering Results
+
+Limit output to specific hosts or roles:
+
+<CodeGroup>
+
+```bash By host pattern
+# All web hosts
+kamal app containers --hosts "web*.example.com"
+
+# Specific hosts
+kamal app containers --hosts "web1.example.com,web2.example.com"
+```
+
+```bash By role
+# Web role only
+kamal app containers --roles web
+
+# Multiple roles
+kamal app containers --roles "web,worker"
+```
+
+```bash Primary only
+# Just the primary host
+kamal app containers --primary
+```
+
+</CodeGroup>
+
+## Multiple Containers
+
+You might see multiple containers on a host during:
+
+- **Deployments** - Old and new versions running temporarily
+- **Rollbacks** - Previous version still present
+- **Stale containers** - Old versions not cleaned up
+
+```bash
+# Clean up stale containers
+kamal app stale_containers --stop
+```
+
+<Tip>
+  If you see multiple containers of the same app running, use `kamal app stale_containers` to identify and optionally stop old versions.
+</Tip>
+
+## Comparison with Similar Commands
+
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `kamal app containers` | List all containers | Container list |
+| `kamal app details` | Detailed container info | Full JSON details |
+| `kamal app version` | Show running version | Version string only |
+| `kamal app stale_containers` | Find old containers | Stale container list |
+
+<Note>
+  Use `containers` for a quick overview, `details` for in-depth information, and `version` when you only need version numbers.
+</Note>
+
+## Related Commands
+
+- [`kamal app details`](/commands/app/details) - Show detailed container information
+- [`kamal app version`](/commands/app/version) - Show running app version
+- [`kamal app stale_containers`](/commands/app/stale_containers) - Detect and stop stale containers
+- [`kamal app boot`](/commands/app/boot) - Boot or reboot containers

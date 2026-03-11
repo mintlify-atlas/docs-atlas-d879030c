@@ -1,0 +1,683 @@
+---
+title: Deploying to Multiple Servers
+description: Scale your application across multiple servers with server roles and groups
+---
+
+Kamal makes it easy to deploy your application across multiple servers, organize them into roles, and manage complex multi-server architectures.
+
+## Server Roles
+
+### Single Role Deployment
+
+The simplest multi-server setup uses a single role:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+    - 192.168.0.3
+```
+
+All servers in the `web` role run the same application configuration.
+
+### Multiple Roles
+
+Organize servers by function:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+  
+  worker:
+    hosts:
+      - 192.168.0.3
+    cmd: bin/jobs
+  
+  websocket:
+    hosts:
+      - 192.168.0.4
+    cmd: bin/cable
+```
+
+<Tip>
+Roles let you run different processes on different servers using the same application image.
+</Tip>
+
+## Role Configuration
+
+### Custom Commands
+
+Each role can run a different command:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    # Default: runs your app's default command
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    cmd: bundle exec sidekiq
+  
+  scheduler:
+    hosts:
+      - 192.168.0.3
+    cmd: bundle exec clockwork clock.rb
+```
+
+### Role-Specific Labels
+
+Add Docker labels per role:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    labels:
+      team: frontend
+      environment: production
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    labels:
+      team: backend
+      queue: high-priority
+```
+
+### Role-Specific Environment Variables
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    env:
+      clear:
+        WEB_CONCURRENCY: 3
+        RAILS_MAX_THREADS: 5
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    env:
+      clear:
+        SIDEKIQ_CONCURRENCY: 10
+```
+
+## Proxy Configuration per Role
+
+### Different Domains per Role
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy:
+      ssl: true
+      host: app.example.com
+  
+  api:
+    hosts:
+      - 192.168.0.2
+    proxy:
+      ssl: true
+      host: api.example.com
+      app_port: 4000
+  
+  admin:
+    hosts:
+      - 192.168.0.3
+    proxy:
+      ssl: true
+      host: admin.example.com
+```
+
+### Disable Proxy for Specific Roles
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy:
+      ssl: true
+      host: app.example.com
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    # No proxy - background workers don't need it
+```
+
+## Rolling Deployments
+
+### Configure Boot Limits
+
+Control how many containers start simultaneously:
+
+```yaml
+boot:
+  limit: 2  # Boot 2 servers at a time
+  wait: 5   # Wait 5 seconds between batches
+```
+
+Or use a percentage:
+
+```yaml
+boot:
+  limit: 25%  # Boot 25% of servers at a time
+  wait: 10
+```
+
+### How Rolling Deploys Work
+
+<Steps>
+
+<Step title="Start First Batch">
+Kamal starts containers on the first batch of servers (based on limit).
+</Step>
+
+<Step title="Health Check">
+Waits for health checks to pass on the new containers.
+</Step>
+
+<Step title="Switch Traffic">
+Updates the proxy to route traffic to new containers.
+</Step>
+
+<Step title="Wait Period">
+Waits for the configured time before starting the next batch.
+</Step>
+
+<Step title="Repeat">
+Repeats for each batch until all servers are updated.
+</Step>
+
+</Steps>
+
+### Zero-Downtime Deployments
+
+With proper configuration, you achieve zero downtime:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+    - 192.168.0.3
+
+boot:
+  limit: 1    # One server at a time
+  wait: 5     # Wait for stability
+
+proxy:
+  healthcheck:
+    path: /health
+    interval: 10s
+    timeout: 5s
+```
+
+## Targeting Specific Servers
+
+### Deploy to Specific Roles
+
+```bash
+# Deploy only to web servers
+kamal deploy --roles web
+
+# Deploy to multiple roles
+kamal deploy --roles web,worker
+```
+
+### Target Specific Hosts
+
+```bash
+# Deploy to specific hosts
+kamal deploy --hosts 192.168.0.1,192.168.0.2
+
+# Execute commands on specific hosts
+kamal app exec --hosts 192.168.0.1 "bundle exec rails console"
+```
+
+### Check Specific Servers
+
+```bash
+# View details for specific role
+kamal app details --roles worker
+
+# Check logs from specific host
+kamal app logs --hosts 192.168.0.1
+```
+
+## Server Groups and Batching
+
+### Group-Based Deployment
+
+Organize servers into groups:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1  # Group 1
+      - 192.168.0.2  # Group 1
+      - 192.168.0.3  # Group 2
+      - 192.168.0.4  # Group 2
+
+boot:
+  limit: 2  # Deploy to 2 servers at once
+```
+
+### Canary Deployments
+
+Deploy to a subset of servers first:
+
+<Steps>
+
+<Step title="Deploy to Canary">
+```bash
+kamal deploy --hosts 192.168.0.1
+```
+</Step>
+
+<Step title="Monitor and Test">
+Check metrics, logs, and error rates on the canary server.
+</Step>
+
+<Step title="Deploy to All">
+If canary is healthy:
+```bash
+kamal deploy
+```
+</Step>
+
+</Steps>
+
+## Multi-Region Deployments
+
+### Regional Server Groups
+
+```yaml
+servers:
+  web_us_east:
+    hosts:
+      - 10.1.0.1
+      - 10.1.0.2
+    labels:
+      region: us-east-1
+  
+  web_eu_west:
+    hosts:
+      - 10.2.0.1
+      - 10.2.0.2
+    labels:
+      region: eu-west-1
+  
+  web_ap_south:
+    hosts:
+      - 10.3.0.1
+      - 10.3.0.2
+    labels:
+      region: ap-south-1
+```
+
+### Deploy to Specific Regions
+
+```bash
+# Deploy to US region only
+kamal deploy --roles web_us_east
+
+# Deploy to multiple regions
+kamal deploy --roles web_us_east,web_eu_west
+```
+
+## Load Balancing
+
+### External Load Balancer
+
+When using an external load balancer:
+
+```yaml
+servers:
+  web:
+    - 10.0.1.1
+    - 10.0.1.2
+    - 10.0.1.3
+
+# Remove proxy config - load balancer handles routing
+# No proxy section needed
+```
+
+Your load balancer distributes traffic across all web servers.
+
+### Built-in Proxy Load Balancing
+
+For single-server deployments with kamal-proxy:
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+
+proxy:
+  ssl: true
+  host: app.example.com
+```
+
+kamal-proxy handles SSL termination and routes to your containers.
+
+<Warning>
+Do not use kamal-proxy SSL configuration with multiple web servers. Use an external load balancer to terminate SSL instead.
+</Warning>
+
+## SSH Configuration for Multiple Servers
+
+### Custom SSH User
+
+```yaml
+ssh:
+  user: deploy
+```
+
+Uses the `deploy` user on all servers.
+
+### Per-Role SSH User
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    ssh:
+      user: web-deploy
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    ssh:
+      user: worker-deploy
+```
+
+### SSH Proxy Jump
+
+Access servers through a bastion host:
+
+```yaml
+ssh:
+  user: deploy
+  proxy: "bastion@jump.example.com"
+```
+
+Or with specific configuration:
+
+```yaml
+ssh:
+  user: deploy
+  proxy:
+    host: jump.example.com
+    user: bastion
+```
+
+## Resource Management
+
+### Per-Role Resource Limits
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    options:
+      memory: 2g
+      cpus: 2
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    options:
+      memory: 4g
+      cpus: 4
+```
+
+### Volume Management
+
+Mount different volumes per role:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    volumes:
+      - "web_storage:/app/storage"
+  
+  worker:
+    hosts:
+      - 192.168.0.2
+    volumes:
+      - "worker_storage:/app/storage"
+      - "worker_tmp:/app/tmp"
+```
+
+## Health Checks
+
+### Role-Specific Health Checks
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    proxy:
+      healthcheck:
+        path: /health
+        interval: 10s
+        timeout: 5s
+  
+  api:
+    hosts:
+      - 192.168.0.2
+    proxy:
+      healthcheck:
+        path: /api/health
+        interval: 15s
+        timeout: 10s
+```
+
+### Readiness Checks
+
+Ensure containers are ready before receiving traffic:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    proxy:
+      healthcheck:
+        path: /ready
+        interval: 5s
+        timeout: 3s
+  
+boot:
+  limit: 1
+  wait: 10  # Wait for health checks to stabilize
+```
+
+## Monitoring Multiple Servers
+
+### View Logs from All Servers
+
+```bash
+# Logs from all web servers
+kamal app logs --roles web
+
+# Follow logs across all servers
+kamal app logs --roles web --follow
+
+# Logs from specific time
+kamal app logs --since 1h
+```
+
+### Server Status
+
+```bash
+# Status of all servers
+kamal app details
+
+# Status by role
+kamal app details --roles worker
+
+# Container status
+kamal app containers
+```
+
+## Troubleshooting
+
+<Accordion title="Some servers fail during deployment">
+Check individual server logs:
+```bash
+kamal app logs --hosts 192.168.0.1 --since 10m
+```
+
+Common issues:
+- Network connectivity problems
+- Insufficient resources (memory/CPU)
+- Failed health checks
+</Accordion>
+
+<Accordion title="Uneven traffic distribution">
+Verify:
+- All servers are healthy: `kamal app details`
+- Load balancer configuration
+- Network latency between servers
+- Health check settings
+</Accordion>
+
+<Accordion title="Rolling deployment stuck">
+If deployment hangs:
+```bash
+# Check which servers are waiting
+kamal app containers
+
+# Check health check status
+kamal proxy details
+
+# Force continue (if safe)
+kamal app boot --skip-push
+```
+</Accordion>
+
+## Best Practices
+
+1. **Use rolling deployments** - Set boot limits to avoid downtime
+2. **Configure health checks** - Ensure traffic only goes to healthy containers
+3. **Label your servers** - Use labels for organization and monitoring
+4. **Test with canaries** - Deploy to a subset first for new features
+5. **Monitor all servers** - Use centralized logging and metrics
+6. **Use consistent sizing** - Keep servers in a role similarly sized
+7. **Document your roles** - Clearly define what each role does
+8. **Automate SSH access** - Use SSH keys and proper access controls
+
+## Example Configurations
+
+<CodeGroup>
+
+```yaml Simple Multi-Server
+service: my-app
+image: user/my-app
+
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+    - 192.168.0.3
+
+boot:
+  limit: 1
+  wait: 5
+
+proxy:
+  ssl: true
+  host: myapp.com
+```
+
+```yaml Multi-Role Architecture
+service: my-app
+image: user/my-app
+
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    proxy:
+      ssl: true
+      host: myapp.com
+  
+  worker:
+    hosts:
+      - 192.168.0.3
+    cmd: bundle exec sidekiq
+  
+  scheduler:
+    hosts:
+      - 192.168.0.4
+    cmd: bundle exec clockwork
+
+boot:
+  limit: 1
+  wait: 10
+```
+
+```yaml Multi-Region Setup
+service: my-app
+image: user/my-app
+
+servers:
+  web_us:
+    hosts:
+      - 10.1.0.1
+      - 10.1.0.2
+    labels:
+      region: us-east-1
+    proxy:
+      ssl: true
+      host: us.myapp.com
+  
+  web_eu:
+    hosts:
+      - 10.2.0.1
+      - 10.2.0.2
+    labels:
+      region: eu-west-1
+    proxy:
+      ssl: true
+      host: eu.myapp.com
+
+boot:
+  limit: 1
+  wait: 15
+```
+
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Accessories Setup" icon="database" href="/guides/accessories-setup">
+    Configure databases and Redis
+  </Card>
+  <Card title="Secrets Management" icon="key" href="/guides/secrets-management">
+    Manage sensitive configuration
+  </Card>
+</CardGroup>

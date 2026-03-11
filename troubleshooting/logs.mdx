@@ -1,0 +1,514 @@
+---
+title: Logs
+description: Viewing and analyzing logs from your applications and services
+---
+
+Kamal provides powerful log viewing capabilities for debugging and monitoring your deployments.
+
+## Application Logs
+
+### Basic Log Viewing
+
+View logs from your application containers:
+
+```bash
+# Show last 100 lines from all app servers
+kamal app logs
+
+# Show specific number of lines
+kamal app logs --lines 50
+kamal app logs -n 200
+```
+
+### Time-Based Filtering
+
+View logs from a specific time period:
+
+```bash
+# Show logs since absolute timestamp
+kamal app logs --since 2024-03-11T10:00:00Z
+
+# Show logs since relative time
+kamal app logs --since 30m    # Last 30 minutes
+kamal app logs --since 2h     # Last 2 hours
+kamal app logs --since 1d     # Last day
+kamal app logs -s 45m         # Short form
+```
+
+### Search Logs with Grep
+
+Filter log lines using grep patterns:
+
+```bash
+# Show only lines containing "ERROR"
+kamal app logs --grep ERROR
+
+# Case-insensitive search
+kamal app logs --grep error --grep-options "-i"
+
+# Search for request IDs
+kamal app logs --grep "request_id=abc123"
+
+# Multiple grep options
+kamal app logs --grep "error" --grep-options "-i -A 3 -B 3"
+```
+
+<Tip>
+  Use grep to track specific requests through your logs by searching for request IDs or correlation IDs.
+</Tip>
+
+### Follow Logs in Real-Time
+
+Stream logs as they're generated (tail -f style):
+
+```bash
+# Follow logs on primary server
+kamal app logs --follow
+kamal app logs -f
+
+# Follow logs on specific host
+kamal app logs --follow --hosts 1.2.3.4
+
+# Follow with grep filter
+kamal app logs --follow --grep ERROR
+
+# Follow showing last 50 lines first
+kamal app logs --follow --lines 50
+```
+
+<Warning>
+  The `--follow` flag only works on the primary server or a single host specified with `--hosts`.
+</Warning>
+
+### Log Timestamps
+
+Control timestamp display:
+
+```bash
+# Show logs with timestamps (default)
+kamal app logs
+
+# Hide timestamps
+kamal app logs --skip-timestamps
+kamal app logs -T
+```
+
+## Host and Role Filtering
+
+### View Logs from Specific Servers
+
+```bash
+# Logs from specific host
+kamal app logs --hosts 1.2.3.4
+
+# Logs from multiple hosts
+kamal app logs --hosts "1.2.3.4,5.6.7.8"
+
+# Logs from hosts matching wildcard
+kamal app logs --hosts "web-*"
+```
+
+### View Logs from Specific Roles
+
+```bash
+# Logs from web role only
+kamal app logs --roles web
+
+# Logs from worker role
+kamal app logs --roles worker
+
+# Multiple roles
+kamal app logs --roles "web,worker"
+```
+
+### Primary Server Only
+
+```bash
+# Logs from primary server
+kamal app logs --primary
+kamal app logs -p
+```
+
+## Container-Specific Logs
+
+### Logs from Specific Container
+
+When you need logs from a specific container ID:
+
+```bash
+# Get container ID
+kamal app containers
+
+# View logs from that container
+kamal app logs --container-id abc123def456
+```
+
+This is useful when:
+- Multiple versions are running during deployment
+- Debugging a specific failed container
+- Comparing logs between old and new versions
+
+## Proxy Logs
+
+### View Proxy Server Logs
+
+Monitor kamal-proxy logs for request routing and SSL issues:
+
+```bash
+# Show proxy logs
+kamal proxy logs
+
+# Last 50 lines
+kamal proxy logs --lines 50
+kamal proxy logs -n 50
+
+# Since specific time
+kamal proxy logs --since 1h
+kamal proxy logs -s 30m
+
+# Follow proxy logs
+kamal proxy logs --follow
+kamal proxy logs -f
+```
+
+### Search Proxy Logs
+
+```bash
+# Find specific requests
+kamal proxy logs --grep "/api/users"
+
+# Find SSL errors
+kamal proxy logs --grep "ssl" --grep-options "-i"
+
+# Find 5xx errors
+kamal proxy logs --grep "50[0-9]"
+```
+
+## Accessory Logs
+
+View logs from accessories (databases, Redis, etc.):
+
+```bash
+# Logs from specific accessory
+kamal accessory logs mysql
+kamal accessory logs redis
+
+# With options
+kamal accessory logs mysql --lines 100
+kamal accessory logs redis --follow
+kamal accessory logs postgres --since 1h
+```
+
+## Log Format
+
+### Understanding Log Output
+
+Kamal displays logs with host prefixes when multiple hosts are involved:
+
+<CodeGroup>
+```bash Example Output
+[web1.example.com] I, [2024-03-11T10:23:45.123456 #1]  INFO -- : Started GET "/" for 1.2.3.4
+[web2.example.com] I, [2024-03-11T10:23:45.234567 #1]  INFO -- : Started GET "/api/users" for 5.6.7.8
+[web1.example.com] I, [2024-03-11T10:23:45.345678 #1]  INFO -- : Completed 200 OK in 23ms
+```
+</CodeGroup>
+
+Format breakdown:
+- `[host]` - Server hostname
+- Timestamp from Docker container
+- Log level and message from your application
+
+### Quiet Mode
+
+Suppress host prefixes and extra output:
+
+```bash
+kamal app logs --quiet
+kamal app logs -q
+```
+
+## Practical Log Analysis
+
+### Find Application Errors
+
+<Accordion title="Ruby/Rails Errors">
+  ```bash
+  # Find exceptions
+  kamal app logs --grep "Error:" --grep-options "-A 10"
+  
+  # Find fatal errors
+  kamal app logs --grep "FATAL"
+  
+  # Find with context
+  kamal app logs --grep "exception" --grep-options "-i -B 5 -A 10"
+  ```
+</Accordion>
+
+<Accordion title="HTTP Errors">
+  ```bash
+  # Find 500 errors
+  kamal app logs --grep "500 Internal Server Error"
+  
+  # Find any 5xx errors
+  kamal app logs --grep "50[0-9]"
+  
+  # Find slow requests
+  kamal app logs --grep "Completed" --grep "[0-9]{4,}ms" --grep-options "-E"
+  ```
+</Accordion>
+
+<Accordion title="Database Issues">
+  ```bash
+  # Find database errors
+  kamal app logs --grep "ActiveRecord" --grep-options "-i"
+  
+  # Find connection errors
+  kamal app logs --grep "connection" --grep-options "-i" | grep -i error
+  
+  # Find slow queries
+  kamal app logs --grep "Query Load" --grep "[0-9]{3,}ms" --grep-options "-E"
+  ```
+</Accordion>
+
+### Track Deployment Issues
+
+```bash
+# Logs during last deploy
+kamal app logs --since 10m --grep "Started"
+
+# Check boot messages
+kamal app logs --lines 200 | grep -i "boot\|start\|ready"
+
+# Find health check failures
+kamal app logs --grep "/up" --since 5m
+```
+
+### Monitor Memory Issues
+
+```bash
+# Find out of memory errors
+kamal app logs --grep "memory" --grep-options "-i"
+
+# Find killed processes
+kamal app logs --grep "killed" --grep-options "-i"
+```
+
+## Audit Logs
+
+View Kamal operation history:
+
+```bash
+kamal audit
+```
+
+<CodeGroup>
+```bash Output
+2024-03-11 15:23:45 UTC Deployed app version v123 (user@hostname)
+2024-03-11 15:20:12 UTC Acquired deploy lock v123 (user@hostname)
+2024-03-11 15:15:33 UTC Pulled image with version v123 (deploy@localhost)
+2024-03-11 14:55:03 UTC Stopped app for role web (deploy@localhost)
+2024-03-11 14:50:22 UTC Started app version v122 (deploy@localhost)
+2024-03-11 14:45:15 UTC Rebooted proxy (deploy@localhost)
+```
+</CodeGroup>
+
+Audit logs show:
+- What operation was performed
+- When it happened (UTC)
+- What version was involved
+- Who initiated it
+
+## Export and Share Logs
+
+### Save Logs to File
+
+```bash
+# Save logs to file
+kamal app logs --lines 500 > app-logs.txt
+
+# Save with timestamps
+date > debug-$(date +%Y%m%d).log
+kamal app logs --lines 1000 >> debug-$(date +%Y%m%d).log
+```
+
+### Create Debug Bundle
+
+```bash
+#!/bin/bash
+# debug-bundle.sh
+
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+OUTPUT="kamal-debug-${TIMESTAMP}.log"
+
+echo "=== Kamal Version ===" > "$OUTPUT"
+kamal version >> "$OUTPUT"
+
+echo -e "\n=== Configuration (Redacted) ===" >> "$OUTPUT"
+kamal config >> "$OUTPUT" 2>&1
+
+echo -e "\n=== App Containers ===" >> "$OUTPUT"
+kamal app containers >> "$OUTPUT" 2>&1
+
+echo -e "\n=== App Logs (Last 200 lines) ===" >> "$OUTPUT"
+kamal app logs --lines 200 >> "$OUTPUT" 2>&1
+
+echo -e "\n=== Proxy Logs (Last 100 lines) ===" >> "$OUTPUT"
+kamal proxy logs --lines 100 >> "$OUTPUT" 2>&1
+
+echo -e "\n=== Audit Log ===" >> "$OUTPUT"
+kamal audit >> "$OUTPUT" 2>&1
+
+echo "Debug bundle saved to: $OUTPUT"
+```
+
+## Log Retention
+
+### Docker Log Management
+
+Docker manages container logs. Configure retention in your deployment:
+
+```yaml
+# config/deploy.yml
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+For kamal-proxy specifically:
+
+```yaml
+proxy:
+  run:
+    log_max_size: "10m"
+```
+
+### Access Raw Log Files
+
+On the server, Docker stores logs at:
+
+```bash
+# SSH to server
+ssh deploy@your-server
+
+# Find log files
+sudo ls /var/lib/docker/containers/*/
+
+# View raw logs
+sudo tail -f /var/lib/docker/containers/CONTAINER_ID/CONTAINER_ID-json.log
+```
+
+## Centralized Logging
+
+### Forward to External Service
+
+Integrate with log aggregation services:
+
+<Accordion title="Using Log Driver">
+  Configure Docker logging driver in `config/deploy.yml`:
+  
+  ```yaml
+  logging:
+    driver: syslog
+    options:
+      syslog-address: "tcp://logs.example.com:514"
+      tag: "myapp-{{.Name}}"
+  ```
+  
+  Supported drivers:
+  - `json-file` (default)
+  - `syslog`
+  - `journald`
+  - `gelf` (Graylog)
+  - `fluentd`
+  - `awslogs` (CloudWatch)
+</Accordion>
+
+<Accordion title="Using Sidecar Container">
+  Deploy a log forwarder as an accessory:
+  
+  ```yaml
+  accessories:
+    logspout:
+      image: gliderlabs/logspout:latest
+      host: 1.2.3.4
+      cmd: syslog://logs.example.com:514
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+  ```
+</Accordion>
+
+## Performance Considerations
+
+<Warning>
+  Fetching logs from multiple servers can be slow. Use filters to reduce the amount of data:
+  
+  - Limit lines with `--lines`
+  - Use time filters with `--since`
+  - Filter by host/role with `--hosts`/`--roles`
+  - Use grep to find specific patterns
+</Warning>
+
+### Optimize Log Queries
+
+```bash
+# Instead of this (slow)
+kamal app logs | grep ERROR
+
+# Do this (fast)
+kamal app logs --grep ERROR
+```
+
+The `--grep` option filters on the server side, reducing network transfer.
+
+## Tips and Best Practices
+
+<Accordion title="Structured Logging">
+  Use structured logs (JSON) for easier parsing:
+  
+  ```ruby
+  # Rails: config/environments/production.rb
+  config.log_formatter = Logger::Formatter.new
+  config.logger = ActiveSupport::TaggedLogging.new(
+    Logger.new(STDOUT)
+  )
+  ```
+  
+  Then parse with `jq`:
+  ```bash
+  kamal app logs --quiet | jq 'select(.level == "error")'
+  ```
+</Accordion>
+
+<Accordion title="Request ID Tracking">
+  Include request IDs in logs to trace requests across services:
+  
+  ```ruby
+  # Rails automatically includes request IDs
+  Rails.logger.info "Processing payment", request_id: request.request_id
+  ```
+  
+  Then search:
+  ```bash
+  kamal app logs --grep "request_id=abc-123-def"
+  ```
+</Accordion>
+
+<Accordion title="Log Levels">
+  Use appropriate log levels:
+  - `DEBUG` - Detailed diagnostic info
+  - `INFO` - General informational messages
+  - `WARN` - Warning messages
+  - `ERROR` - Error messages
+  - `FATAL` - Critical errors
+  
+  Then filter by level:
+  ```bash
+  kamal app logs --grep "ERROR\|FATAL"
+  ```
+</Accordion>
+
+<Tip>
+  Set up log rotation in your application to prevent logs from filling up disk space. Kamal's Docker logging configuration handles this automatically.
+</Tip>

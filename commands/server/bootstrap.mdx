@@ -1,0 +1,236 @@
+---
+title: kamal server bootstrap
+description: Set up Docker on servers to run Kamal applications
+---
+
+The `kamal server bootstrap` command prepares your servers for running Kamal by installing Docker and configuring the necessary permissions.
+
+## Overview
+
+Bootstrap is typically run automatically as part of `kamal setup`, but can be executed independently to prepare servers without deploying an application.
+
+<Info>
+  Bootstrap requires root access or sudo privileges on the target servers to install Docker and modify user groups.
+</Info>
+
+## Usage
+
+```bash
+kamal server bootstrap
+```
+
+## What Bootstrap Does
+
+<Steps>
+  <Step title="Check Docker Installation">
+    Verifies whether Docker is already installed on each server.
+    
+    ```ruby
+    # From server.rb:34
+    unless execute(*KAMAL.docker.installed?, raise_on_non_zero_exit: false)
+    ```
+  </Step>
+  
+  <Step title="Install Docker">
+    If Docker is missing and the user has superuser access, Kamal automatically installs Docker using the official installation script.
+    
+    ```ruby
+    # From server.rb:36-37
+    info "Missing Docker on #{host}. Installing…"
+    execute *KAMAL.docker.install
+    ```
+    
+    <Note>
+      Docker installation requires either `wget` or `curl` to be available on the server.
+    </Note>
+  </Step>
+  
+  <Step title="Configure Docker Group">
+    Adds the deployment user to the `docker` group to allow running Docker commands without sudo.
+    
+    ```ruby
+    # From server.rb:39-46
+    unless execute(*KAMAL.docker.root?, raise_on_non_zero_exit: false) ||
+           execute(*KAMAL.docker.in_docker_group?, raise_on_non_zero_exit: false)
+      execute *KAMAL.docker.add_to_docker_group
+      execute *KAMAL.docker.refresh_session
+    end
+    ```
+  </Step>
+  
+  <Step title="Run docker-setup Hook">
+    Executes the `docker-setup` hook if defined, allowing custom post-installation configuration.
+    
+    ```ruby
+    # From server.rb:58
+    run_hook "docker-setup"
+    ```
+  </Step>
+</Steps>
+
+## Example Output
+
+```bash
+$ kamal server bootstrap
+
+INFO [192.168.1.10] Running /usr/bin/env docker version on 192.168.1.10
+INFO [192.168.1.10] Missing Docker on 192.168.1.10. Installing…
+INFO [192.168.1.10] Running curl -fsSL https://get.docker.com | sh
+INFO [192.168.1.10] Docker installed successfully
+INFO [192.168.1.10] Adding user to docker group
+INFO [192.168.1.10] Session refreshed due to group change.
+```
+
+## Error Handling
+
+### Manual Installation Required
+
+If Docker cannot be automatically installed, bootstrap will fail with an error:
+
+```
+Docker is not installed on 192.168.1.10 and can't be automatically 
+installed without having root access and either `wget` or `curl`. 
+Install Docker manually: https://docs.docker.com/engine/install/
+```
+
+**Solution**: Manually install Docker on the affected servers:
+
+```bash
+# SSH into the server
+ssh user@192.168.1.10
+
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in for group changes to take effect
+```
+
+## Server Requirements
+
+Before running bootstrap, ensure your servers have:
+
+<ParamField body="Operating System" type="string" required>
+  Any Linux distribution supported by Docker (Ubuntu, Debian, CentOS, etc.)
+</ParamField>
+
+<ParamField body="Root Access" type="boolean" required>
+  Either root user or sudo privileges to install packages and modify groups
+</ParamField>
+
+<ParamField body="Network Access" type="string" required>
+  Outbound internet access to download Docker installation scripts
+</ParamField>
+
+<ParamField body="Required Utilities" type="string" required>
+  Either `wget` or `curl` must be installed for Docker installation
+</ParamField>
+
+## SSH Configuration
+
+By default, Kamal attempts to connect as root. To use a different user:
+
+```yaml config/deploy.yml
+ssh:
+  user: deploy
+```
+
+<Warning>
+  The SSH user must have sudo privileges if not running as root. Bootstrap will add this user to the docker group.
+</Warning>
+
+## Integration with Setup
+
+Bootstrap is automatically invoked during `kamal setup`:
+
+```ruby
+# From main.rb:10-11
+say "Ensure Docker is installed...", :magenta
+invoke "kamal:cli:server:bootstrap", [], invoke_options
+```
+
+You typically don't need to run bootstrap separately unless:
+- Preparing servers before the first deployment
+- Adding new servers to an existing deployment
+- Recovering from Docker installation issues
+
+## Custom docker-setup Hook
+
+You can customize the bootstrap process with a `docker-setup` hook:
+
+```bash .kamal/hooks/docker-setup
+#!/bin/bash
+
+# Example: Configure Docker daemon settings
+echo '{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}' | sudo tee /etc/docker/daemon.json
+
+sudo systemctl reload docker
+```
+
+Make the hook executable:
+
+```bash
+chmod +x .kamal/hooks/docker-setup
+```
+
+## Troubleshooting
+
+### Permission Denied After Bootstrap
+
+If you see permission errors after bootstrap:
+
+```bash
+# Verify user is in docker group
+ssh user@server "groups"
+
+# If not, add manually
+ssh user@server "sudo usermod -aG docker $USER"
+
+# Log out and back in
+ssh user@server "exit"
+ssh user@server
+```
+
+### Docker Service Not Starting
+
+```bash
+# Check Docker service status
+ssh user@server "sudo systemctl status docker"
+
+# Start Docker if stopped
+ssh user@server "sudo systemctl start docker"
+
+# Enable Docker on boot
+ssh user@server "sudo systemctl enable docker"
+```
+
+### Firewall Issues
+
+Ensure required ports are accessible:
+
+```bash
+# Allow Docker daemon (if using remote API)
+sudo ufw allow 2375/tcp
+
+# Allow application ports
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+```
+
+## Related Commands
+
+- [`kamal setup`](/deployment/setup) - Complete setup including bootstrap
+- [`kamal server exec`](/commands/server/exec) - Execute commands on servers
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/server.rb:28-60`

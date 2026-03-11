@@ -1,0 +1,190 @@
+---
+title: kamal proxy reboot
+description: Reboot the kamal-proxy container to upgrade or apply changes
+---
+
+The `kamal proxy reboot` command stops, removes, and recreates the kamal-proxy container. This is used to upgrade the proxy version or apply configuration changes that require a container restart.
+
+## Usage
+
+```bash
+kamal proxy reboot [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--rolling" type="boolean" default="false">
+  Reboot proxy on hosts in sequence rather than in parallel.
+</ParamField>
+
+<ParamField path="--confirmed" type="boolean" default="false">
+  Proceed without confirmation prompt (can also use `-y`).
+</ParamField>
+
+## What It Does
+
+The reboot command performs the following operations on each proxy host:
+
+1. **Logs into Registry** - Authenticates to pull the latest proxy image
+2. **Stops Container** - Stops the running kamal-proxy container
+3. **Removes Container** - Removes the stopped container
+4. **Creates Config Directory** - Ensures the apps config directory exists
+5. **Runs New Container** - Creates and starts a new kamal-proxy container with the latest image
+
+<Warning>
+Rebooting the proxy will cause a brief outage during which your application will be unavailable. Use `--rolling` to minimize impact.
+</Warning>
+
+## Rolling Reboot
+
+For multi-server deployments, use the `--rolling` flag to reboot proxies one at a time:
+
+```bash
+kamal proxy reboot --rolling
+```
+
+This processes each host sequentially, minimizing downtime by keeping other servers available during the reboot.
+
+<Note>
+Rolling reboots are only useful when you have multiple proxy hosts. For single-server deployments, there's no difference.
+</Note>
+
+## Confirmation Prompt
+
+By default, the reboot command asks for confirmation:
+
+```
+This will cause a brief outage on each host. Are you sure? (y/N)
+```
+
+Skip the prompt with the `--confirmed` flag:
+
+```bash
+kamal proxy reboot --confirmed
+# or
+kamal proxy reboot -y
+```
+
+## When to Use
+
+**Use `kamal proxy reboot` when:**
+- Upgrading to a newer version of kamal-proxy
+- The proxy version is outdated (you'll see a version error)
+- Applying changes to proxy container configuration in `deploy.yml`
+- The proxy is misbehaving and needs a fresh start
+
+**Don't use `kamal proxy reboot` when:**
+- Deploying your application (use `kamal deploy` instead)
+- Just restarting the proxy without pulling a new image (use `kamal proxy restart`)
+- The proxy is not running (use `kamal proxy boot` instead)
+
+## Hooks
+
+The reboot command triggers proxy-specific hooks:
+
+```yaml
+hooks:
+  pre-proxy-reboot:
+    - path: scripts/pre-proxy-reboot.sh
+  post-proxy-reboot:
+    - path: scripts/post-proxy-reboot.sh
+```
+
+<Accordion title="Hook Example">
+```bash
+#!/bin/bash
+# scripts/pre-proxy-reboot.sh
+
+echo "Preparing to reboot proxy on $KAMAL_HOSTS"
+echo "This will cause a brief outage"
+
+# Notify monitoring service
+curl -X POST https://monitoring.example.com/events \
+  -d "event=proxy_reboot_starting" \
+  -d "hosts=$KAMAL_HOSTS"
+```
+</Accordion>
+
+See [Hooks Configuration](/configuration/hooks) for more details.
+
+## Example Output
+
+```bash
+$ kamal proxy reboot --rolling
+This will cause a brief outage on each host. Are you sure? (y/N) y
+  INFO [abc123] Running hook: pre-proxy-reboot
+  INFO [abc123] Finished in 0.123s
+  INFO [def456] Running docker login... on 192.168.1.10
+  INFO [def456] Finished in 1.234s
+  INFO [ghi789] Running docker stop kamal-proxy on 192.168.1.10
+  INFO [ghi789] Finished in 2.345s
+  INFO [jkl012] Running docker rm kamal-proxy on 192.168.1.10
+  INFO [jkl012] Finished in 0.456s
+  INFO [mno345] Running docker run kamal-proxy... on 192.168.1.10
+  INFO [mno345] Finished in 3.456s
+  INFO [pqr678] Running hook: post-proxy-reboot
+  INFO [pqr678] Finished in 0.234s
+```
+
+## Version Upgrades
+
+When you see a version error during deployment:
+
+```
+kamal-proxy version 0.4.0 is too old, run `kamal proxy reboot` 
+in order to update to at least 0.5.0
+```
+
+Simply run the reboot command:
+
+```bash
+kamal proxy reboot -y
+```
+
+This will pull and run the latest kamal-proxy image configured in your `deploy.yml`.
+
+## Configuration Updates
+
+If you change proxy container settings in `deploy.yml`, reboot to apply them:
+
+```yaml
+proxy:
+  run:
+    http_port: 8080      # Changed from 80
+    https_port: 8443     # Changed from 443
+    metrics_port: 9090   # Newly added
+```
+
+```bash
+kamal proxy reboot
+```
+
+<Note>
+Changes to application-level proxy settings (like `host`, `ssl`, `app_port`) are applied during `kamal deploy` and don't require a proxy reboot.
+</Note>
+
+## Locking
+
+The reboot command uses Kamal's distributed lock to prevent concurrent operations. If another Kamal command is running, you'll need to wait for it to complete.
+
+## Auditing
+
+Proxy reboots are recorded in Kamal's audit log:
+
+```bash
+kamal audit
+# Shows: "Rebooted proxy" entries with timestamps
+```
+
+## Related Commands
+
+- [`kamal proxy boot`](/commands/proxy/boot) - Start the proxy from scratch
+- [`kamal proxy details`](/commands/proxy/details) - View proxy container info
+- [`kamal proxy remove`](/commands/proxy/remove) - Remove the proxy container
+- [`kamal proxy restart`](/commands/proxy/restart) - Restart without pulling new image
+
+## See Also
+
+- [Proxy Configuration](/configuration/proxy)
+- [Hooks Configuration](/configuration/hooks)
+- [kamal-proxy Releases](https://github.com/basecamp/kamal-proxy/releases)

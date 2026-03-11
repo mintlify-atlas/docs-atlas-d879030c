@@ -1,0 +1,424 @@
+---
+title: SSH Configuration
+description: Configure SSH connection settings for remote hosts
+---
+
+Kamal uses SSH to connect and run commands on your hosts. By default, it connects as the `root` user on port 22.
+
+## Basic Configuration
+
+```yaml
+ssh:
+  user: app
+  port: 2222
+```
+
+All SSH options are specified under the `ssh` key in the root configuration.
+
+## User
+
+<ParamField path="user" type="string" default="root">
+  SSH username to connect with.
+</ParamField>
+
+```yaml
+ssh:
+  user: deploy
+```
+
+### Non-Root User Setup
+
+If using a non-root user, you must bootstrap servers manually first. On Ubuntu:
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y docker.io curl git
+sudo usermod -a -G docker app
+```
+
+<Note>
+The user must have Docker permissions and passwordless sudo access for Kamal operations.
+</Note>
+
+## Port
+
+<ParamField path="port" type="integer" default="22">
+  SSH port to connect to.
+</ParamField>
+
+```yaml
+ssh:
+  port: 2222
+```
+
+## Proxy (Jump Host)
+
+<ParamField path="proxy" type="string">
+  SSH proxy/jump host for connecting through a bastion.
+</ParamField>
+
+```yaml
+ssh:
+  proxy: bastion.example.com
+  # or with user
+  proxy: ubuntu@bastion.example.com
+```
+
+**Format:**
+- `hostname` - Uses root user
+- `user@hostname` - Uses specified user
+
+This uses SSH's ProxyJump feature to connect to your servers through an intermediate host.
+
+## Proxy Command
+
+<ParamField path="proxy_command" type="string">
+  Custom proxy command for older SSH versions or complex setups.
+</ParamField>
+
+```yaml
+ssh:
+  proxy_command: "ssh -W %h:%p user@proxy"
+```
+
+Use this for:
+- Older SSH versions without ProxyJump support
+- Custom proxy configurations
+- Complex network setups
+
+## Keys
+
+<ParamField path="keys" type="array">
+  Private key file paths for authentication.
+</ParamField>
+
+```yaml
+ssh:
+  keys:
+    - ~/.ssh/id_rsa
+    - ~/.ssh/deploy_key.pem
+```
+
+Specify multiple keys if different servers require different keys.
+
+## Key Data
+
+<ParamField path="key_data" type="array">
+  Private keys loaded from secrets.
+</ParamField>
+
+```yaml
+ssh:
+  key_data:
+    - SSH_PRIVATE_KEY
+    - DEPLOY_KEY
+```
+
+In `.kamal/secrets`:
+```shell
+SSH_PRIVATE_KEY=$(cat ~/.ssh/deploy_key)
+# or
+SSH_PRIVATE_KEY="-----BEGIN OPENSSH PRIVATE KEY-----
+MIIEpAIBAAKCAQEA...
+...
+-----END OPENSSH PRIVATE KEY-----"
+```
+
+<Warning>
+Storing keys directly in secrets is deprecated and will be removed in Kamal 3. Store key references instead.
+</Warning>
+
+## Keys Only
+
+<ParamField path="keys_only" type="boolean">
+  Only use keys from `keys` and `key_data`, ignoring ssh-agent.
+</ParamField>
+
+```yaml
+ssh:
+  keys_only: true
+  keys:
+    - ~/.ssh/deploy_key
+```
+
+Use this when:
+- ssh-agent offers many identities (causing authentication failures)
+- You need to force a specific key
+- You want to avoid ssh-agent entirely
+
+## SSH Config
+
+<ParamField path="config" type="boolean | string | array">
+  Load SSH configuration files.
+</ParamField>
+
+<Tabs>
+  <Tab title="Default (true)">
+    ```yaml
+    ssh:
+      config: true
+    ```
+    
+    Loads:
+    - `~/.ssh/config`
+    - `/etc/ssh_config`
+  </Tab>
+  
+  <Tab title="Disabled">
+    ```yaml
+    ssh:
+      config: false
+    ```
+    
+    Ignores all SSH config files.
+  </Tab>
+  
+  <Tab title="Custom File">
+    ```yaml
+    ssh:
+      config: ~/.ssh/kamal_config
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Files">
+    ```yaml
+    ssh:
+      config:
+        - ~/.ssh/production_config
+        - ~/.ssh/shared_config
+    ```
+  </Tab>
+</Tabs>
+
+## Log Level
+
+<ParamField path="log_level" type="string" default="fatal">
+  SSH logging verbosity.
+</ParamField>
+
+```yaml
+ssh:
+  log_level: debug
+```
+
+**Available levels:**
+- `debug` - Verbose debugging output
+- `info` - Informational messages
+- `warn` - Warnings only
+- `error` - Errors only
+- `fatal` - Fatal errors only (default)
+
+<Note>
+Set to `debug` when troubleshooting SSH connection issues.
+</Note>
+
+## Complete Examples
+
+<Accordion title="Basic Non-Root User">
+```yaml
+ssh:
+  user: deploy
+```
+</Accordion>
+
+<Accordion title="Custom Port and User">
+```yaml
+ssh:
+  user: app
+  port: 2222
+```
+</Accordion>
+
+<Accordion title="Jump Host Setup">
+```yaml
+ssh:
+  user: deploy
+  proxy: ubuntu@bastion.example.com
+```
+</Accordion>
+
+<Accordion title="Custom Keys">
+```yaml
+ssh:
+  user: deploy
+  keys:
+    - ~/.ssh/production_deploy_key
+  keys_only: true
+```
+</Accordion>
+
+<Accordion title="Keys from Secrets">
+```yaml
+ssh:
+  user: app
+  key_data:
+    - PRODUCTION_SSH_KEY
+  keys_only: true
+```
+
+In `.kamal/secrets`:
+```shell
+PRODUCTION_SSH_KEY=$(cat ~/.ssh/prod_key)
+```
+</Accordion>
+
+<Accordion title="Complex Proxy Setup">
+```yaml
+ssh:
+  user: deploy
+  port: 2222
+  proxy_command: "ssh -W %h:%p -p 2222 proxy-user@bastion.example.com"
+  log_level: info
+```
+</Accordion>
+
+<Accordion title="Custom Config File">
+```yaml
+ssh:
+  user: app
+  config: ~/.ssh/kamal_config
+```
+
+In `~/.ssh/kamal_config`:
+```
+Host *.example.com
+    User app
+    Port 2222
+    IdentityFile ~/.ssh/deploy_key
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+```
+</Accordion>
+
+<Accordion title="Production with All Options">
+```yaml
+ssh:
+  user: deploy
+  port: 22
+  proxy: bastion.example.com
+  keys:
+    - ~/.ssh/production_key
+  keys_only: true
+  config: ~/.ssh/production_ssh_config
+  log_level: fatal
+```
+</Accordion>
+
+## Testing SSH Configuration
+
+Test your SSH configuration before deploying:
+
+```bash
+# Test connection to all hosts
+kamal server exec "hostname"
+
+# Test connection to specific role
+kamal server exec -r web "whoami"
+
+# Test connection to specific host
+kamal server exec -h 192.168.0.1 "uptime"
+```
+
+## Common Issues
+
+### Permission Denied
+
+**Problem:** SSH authentication fails
+
+**Solutions:**
+1. Verify the user exists on the server
+2. Check key permissions (`chmod 600 ~/.ssh/key`)
+3. Ensure key is in authorized_keys on server
+4. Try `log_level: debug` to see detailed errors
+
+```yaml
+ssh:
+  log_level: debug
+```
+
+### Too Many Authentication Failures
+
+**Problem:** ssh-agent offers too many keys
+
+**Solution:** Use `keys_only` with specific keys
+
+```yaml
+ssh:
+  keys_only: true
+  keys:
+    - ~/.ssh/specific_key
+```
+
+### Connection Timeout
+
+**Problem:** Cannot connect to host
+
+**Solutions:**
+1. Verify host is reachable: `ping <host>`
+2. Check port is correct and open
+3. Verify proxy/jump host if used
+4. Test manual SSH: `ssh user@host -p port`
+
+### Docker Permission Denied
+
+**Problem:** User cannot run Docker commands
+
+**Solution:** Add user to docker group
+
+```bash
+sudo usermod -a -G docker <username>
+# Log out and back in for group change to take effect
+```
+
+## SSH Config File Integration
+
+Kamal respects your SSH config file settings:
+
+```
+# ~/.ssh/config
+Host prod-*
+    User deploy
+    Port 2222
+    IdentityFile ~/.ssh/production_key
+    ProxyJump bastion.example.com
+
+Host staging-*
+    User app
+    IdentityFile ~/.ssh/staging_key
+```
+
+Then in Kamal:
+```yaml
+servers:
+  web:
+    - prod-web-1.example.com
+    - prod-web-2.example.com
+```
+
+## Security Best Practices
+
+<Note>
+**Use Key-Based Authentication**: Never use password authentication. Always use SSH keys.
+</Note>
+
+<Note>
+**Restrict Key Access**: Set proper permissions on private keys (`chmod 600`).
+</Note>
+
+<Note>
+**Use Jump Hosts**: For production, route all SSH through a hardened bastion host.
+</Note>
+
+<Warning>
+**Rotate Keys**: Periodically rotate SSH keys and revoke old keys from servers.
+</Warning>
+
+<Note>
+**Separate Keys per Environment**: Use different SSH keys for staging and production.
+</Note>
+
+## Related Configuration
+
+- [Servers](/configuration/servers) - Configure deployment servers
+- [Environment Variables](/configuration/environment) - Store SSH keys in secrets

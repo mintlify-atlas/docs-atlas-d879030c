@@ -1,0 +1,546 @@
+---
+title: Zero-Downtime Deployments
+description: How Kamal achieves zero-downtime deployments using kamal-proxy
+---
+
+Kamal enables true zero-downtime deployments by using **kamal-proxy** to intelligently route traffic during container transitions. Users experience no interruption even as new versions are deployed.
+
+## How It Works
+
+Kamal achieves zero-downtime through careful orchestration:
+
+<Steps>
+  <Step title="New Container Starts">
+    A new container with the updated code starts alongside the existing one.
+  </Step>
+  
+  <Step title="Health Check Passes">
+    Kamal waits for the new container to pass health checks before routing traffic to it.
+  </Step>
+  
+  <Step title="Traffic Switches">
+    kamal-proxy atomically switches traffic from the old container to the new one.
+  </Step>
+  
+  <Step title="Old Container Drains">
+    The old container continues handling in-flight requests until they complete.
+  </Step>
+  
+  <Step title="Old Container Stops">
+    Once drained, the old container is stopped and removed.
+  </Step>
+</Steps>
+
+<Info>
+  This process happens automatically during every deployment, requiring no special configuration.
+</Info>
+
+## kamal-proxy
+
+kamal-proxy is a lightweight, HTTP/HTTPS reverse proxy that enables zero-downtime deployments:
+
+```ruby
+# From main.rb:36-37
+say "Ensure kamal-proxy is running...", :magenta
+invoke "kamal:cli:proxy:boot", [], invoke_options
+```
+
+### Proxy Boot Process
+
+From `proxy.rb:2-23`:
+
+```ruby
+def boot
+  with_lock do
+    # Create Docker network for container communication
+    on(KAMAL.hosts) do |host|
+      execute *KAMAL.docker.create_network
+    rescue SSHKit::Command::Failed => e
+      raise unless e.message.include?("already exists")
+    end
+    
+    # Start proxy on designated hosts
+    on(KAMAL.proxy_hosts) do |host|
+      execute *KAMAL.registry.login
+      
+      version = capture_with_info(*KAMAL.proxy(host).version).strip.presence
+      
+      if version && Kamal::Utils.older_version?(version, MINIMUM_VERSION)
+        raise "kamal-proxy version #{version} is too old, run `kamal proxy reboot`"
+      end
+      
+      execute *KAMAL.proxy(host).ensure_apps_config_directory
+      execute *KAMAL.proxy(host).start_or_run
+    end
+  end
+end
+```
+
+### Proxy Configuration
+
+Configure the proxy in `config/deploy.yml`:
+
+```yaml config/deploy.yml
+proxy:
+  # Enable automatic SSL via Let's Encrypt
+  ssl: true
+  host: app.example.com
+  
+  # Port your app listens on (default: 80)
+  app_port: 3000
+  
+  # Custom proxy settings
+  run:
+    http_port: 80
+    https_port: 443
+    
+    # Publish on specific interface
+    publish_host_ip: "0.0.0.0"
+    
+    # Memory/CPU limits for the proxy
+    memory: "512m"
+    cpus: 1
+```
+
+## Health Checks
+
+Health checks ensure new containers are ready before receiving traffic:
+
+### Default Health Check
+
+Kamal performs HTTP health checks on your application:
+
+```yaml config/deploy.yml
+# Default: GET / with 200-399 status expected
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+```
+
+### Custom Health Check
+
+Define a custom health check endpoint:
+
+```yaml config/deploy.yml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+    healthcheck:
+      path: /health
+      port: 3000
+      interval: 5s
+      timeout: 3s
+      max_attempts: 10
+```
+
+### Implementing Health Endpoints
+
+In your application:
+
+<CodeGroup>
+```ruby Rails
+# config/routes.rb
+Rails.application.routes.draw do
+  get '/health', to: 'health#show'
+end
+
+# app/controllers/health_controller.rb
+class HealthController < ApplicationController
+  def show
+    # Check critical dependencies
+    if database_connected? && redis_connected?
+      render json: { status: 'ok' }, status: :ok
+    else
+      render json: { status: 'error' }, status: :service_unavailable
+    end
+  end
+  
+  private
+  
+  def database_connected?
+    ActiveRecord::Base.connection.execute('SELECT 1')
+    true
+  rescue
+    false
+  end
+  
+  def redis_connected?
+    Redis.current.ping == 'PONG'
+  rescue
+    false
+  end
+end
+```
+
+```javascript Node.js/Express
+// health.js
+const express = require('express');
+const router = express.Router();
+
+router.get('/health', async (req, res) => {
+  try {
+    // Check database
+    await db.query('SELECT 1');
+    
+    // Check Redis
+    await redis.ping();
+    
+    res.status(200).json({ status: 'ok' });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(503).json({ 
+      status: 'error',
+      message: error.message 
+    });
+  }
+});
+
+module.exports = router;
+```
+</CodeGroup>
+
+<Warning>
+  Health checks should be fast (< 1 second) and check critical dependencies only. Slow health checks delay deployments.
+</Warning>
+
+## Traffic Routing
+
+kamal-proxy manages traffic routing between old and new containers:
+
+### Deployment Flow
+
+```ruby
+# From app.rb:19-32
+barrier = Kamal::Cli::Healthcheck::Barrier.new
+
+host_boot_groups.each do |hosts|
+  host_list = Array(hosts).join(",")
+  run_hook "pre-app-boot", hosts: host_list
+  
+  on_roles(KAMAL.roles, hosts: hosts, parallel: KAMAL.config.boot.parallel_roles) do |host, role|
+    Kamal::Cli::App::Boot.new(host, role, self, version, barrier).run
+  end
+  
+  run_hook "post-app-boot", hosts: host_list
+  sleep KAMAL.config.boot.wait if KAMAL.config.boot.wait
+end
+```
+
+The barrier ensures containers pass health checks before the proxy routes traffic to them.
+
+### Proxy Deploy Command
+
+```ruby
+# From app.rb:51-58
+if role.running_proxy?
+  version = capture_with_info(*app.current_running_version, raise_on_non_zero_exit: false).strip
+  endpoint = capture_with_info(*app.container_id_for_version(version)).strip
+  raise BootError, "Failed to get endpoint" if endpoint.empty?
+  
+  # Tell proxy to route traffic to new container
+  execute *app.deploy(target: endpoint)
+end
+```
+
+## Connection Draining
+
+When stopping old containers, kamal-proxy drains existing connections:
+
+### Drain Timeout Configuration
+
+```yaml config/deploy.yml
+# How long to wait for in-flight requests to complete (default: 30s)
+drain_timeout: 60
+```
+
+During draining:
+1. Proxy stops sending new requests to the old container
+2. Existing connections continue to completion
+3. After timeout, remaining connections are forcibly closed
+
+<Note>
+  Set `drain_timeout` based on your longest-running requests. Long-polling or streaming endpoints may need longer timeouts.
+</Note>
+
+## Multi-Host Deployments
+
+With multiple hosts, zero-downtime is maintained across the fleet:
+
+```ruby
+# From app.rb:356-358
+def host_boot_groups
+  KAMAL.config.boot.limit ? KAMAL.app_hosts.each_slice(KAMAL.config.boot.limit).to_a : [ KAMAL.app_hosts ]
+end
+```
+
+Hosts are booted in groups based on the `limit` configuration, ensuring some servers are always available.
+
+## Load Balancing
+
+For multiple servers, place a load balancer in front of kamal-proxy instances:
+
+```
+┌──────────────────┐
+│  Load Balancer   │
+│  (AWS ALB/NLB)   │
+└────────┬─────────┘
+         │
+    ┌────┴────┬────────────┬────────────┐
+    │         │            │            │
+┌───▼────┐ ┌──▼─────┐ ┌───▼────┐ ┌────▼───┐
+│ Server1│ │Server2 │ │Server3 │ │Server4 │
+│  proxy │ │ proxy  │ │ proxy  │ │ proxy  │
+└───┬────┘ └───┬────┘ └───┬────┘ └────┬───┘
+    │          │           │           │
+┌───▼────┐ ┌───▼────┐ ┌───▼────┐ ┌────▼───┐
+│App     │ │App     │ │App     │ │App     │
+│Container│ │Container│ │Container│ │Container│
+└────────┘ └────────┘ └────────┘ └────────┘
+```
+
+### Load Balancer Configuration
+
+```yaml aws-alb.yml
+LoadBalancer:
+  Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  Properties:
+    Scheme: internet-facing
+    Type: application
+    
+TargetGroup:
+  Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  Properties:
+    Port: 443
+    Protocol: HTTPS
+    HealthCheckPath: /health
+    HealthCheckIntervalSeconds: 15
+    HealthyThresholdCount: 2
+    UnhealthyThresholdCount: 3
+```
+
+<Info>
+  kamal-proxy handles application-level zero-downtime. The load balancer provides infrastructure-level redundancy.
+</Info>
+
+## SSL/TLS Configuration
+
+kamal-proxy can automatically obtain and renew SSL certificates:
+
+```yaml config/deploy.yml
+proxy:
+  ssl: true
+  host: app.example.com
+  
+  # Optional: Provide your own certificates
+  # ssl:
+  #   certificate_path: /path/to/cert.pem
+  #   private_key_path: /path/to/key.pem
+```
+
+### Automatic SSL (Let's Encrypt)
+
+With `ssl: true`, kamal-proxy automatically:
+1. Requests certificates from Let's Encrypt
+2. Validates domain ownership via HTTP-01 challenge
+3. Renews certificates before expiration
+
+<Warning>
+  For Let's Encrypt to work, your domain must point to your server and ports 80 and 443 must be accessible.
+</Warning>
+
+### Manual SSL Certificates
+
+To use your own certificates:
+
+```yaml config/deploy.yml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    ssl:
+      cert: /path/to/cert.pem
+      key: /path/to/key.pem
+```
+
+## Testing Zero-Downtime
+
+Verify zero-downtime behavior:
+
+### Continuous Request Test
+
+```bash
+# Terminal 1: Generate continuous requests
+while true; do
+  curl -s -w "\n%{http_code} %{time_total}s\n" https://app.example.com
+  sleep 0.5
+done
+```
+
+```bash
+# Terminal 2: Deploy
+kamal deploy
+```
+
+Watch for:
+- ✅ All requests succeed (no 502/503 errors)
+- ✅ Response times stay consistent
+- ✅ No connection refused errors
+
+### Load Testing During Deployment
+
+```bash
+# Using Apache Bench
+ab -n 10000 -c 100 https://app.example.com/
+
+# Or hey
+hey -n 10000 -c 100 https://app.example.com/
+```
+
+Run this during deployment to verify zero-downtime under load.
+
+## Common Issues
+
+### Health Check Fails
+
+```
+Health check failed for container xxx
+```
+
+**Solutions**:
+- Check your health endpoint responds correctly
+- Verify the port and path configuration
+- Check container logs: `kamal app logs`
+- Increase timeout if startup is slow
+
+### Traffic Routed Too Early
+
+If users see errors briefly after deployment:
+
+```yaml config/deploy.yml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    healthcheck:
+      interval: 5s
+      max_attempts: 20  # Wait longer before routing traffic
+```
+
+### Old Requests Terminated
+
+If long requests are cut off:
+
+```yaml config/deploy.yml
+# Increase drain timeout
+drain_timeout: 120  # 2 minutes
+```
+
+### Proxy Not Starting
+
+```bash
+# Check proxy status
+kamal proxy details
+
+# View proxy logs
+kamal proxy logs
+
+# Reboot proxy if needed
+kamal proxy reboot
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Implement Robust Health Checks">
+    Check all critical dependencies:
+    
+    ```ruby
+    def health_check
+      checks = {
+        database: database_healthy?,
+        redis: redis_healthy?,
+        external_api: api_healthy?
+      }
+      
+      if checks.values.all?
+        render json: { status: 'healthy', checks: checks }
+      else
+        render json: { status: 'unhealthy', checks: checks }, status: 503
+      end
+    end
+    ```
+  </Step>
+  
+  <Step title="Set Appropriate Timeouts">
+    Configure timeouts based on your application's behavior:
+    
+    ```yaml config/deploy.yml
+    drain_timeout: 60  # Adjust for long requests
+    
+    servers:
+      web:
+        healthcheck:
+          timeout: 5s      # Quick response expected
+          interval: 10s    # Check frequently
+          max_attempts: 12 # Total: 2 minutes
+    ```
+  </Step>
+  
+  <Step title="Monitor During Deployment">
+    Keep an eye on metrics:
+    
+    ```bash
+    # Watch success rate
+    kamal app logs --follow | grep -E "(GET|POST|PUT|DELETE)"
+    
+    # Monitor proxy
+    kamal proxy logs --follow
+    ```
+  </Step>
+  
+  <Step title="Test Deployment Process">
+    Regularly test deployments in staging:
+    
+    ```bash
+    # Deploy to staging with load test
+    kamal deploy --destination staging
+    ```
+  </Step>
+</Steps>
+
+## Advanced: Custom Proxy Configuration
+
+For advanced scenarios, customize proxy behavior:
+
+```yaml config/deploy.yml
+proxy:
+  ssl: true
+  host: app.example.com
+  
+  run:
+    # Bind to specific interface
+    publish_host_ip: "192.168.1.10"
+    
+    # Custom ports
+    http_port: 8080
+    https_port: 8443
+    
+    # Resource limits
+    memory: "1g"
+    cpus: 2
+    
+    # Logging
+    log_max_size: "100m"
+    
+    # Debug mode
+    debug: true
+```
+
+## Next Steps
+
+- Configure [rolling deployments](/deployment/rolling-deploys) for even safer updates
+- Learn about [rollback procedures](/deployment/rollback)
+- Optimize your [deployment workflow](/deployment/deploy)

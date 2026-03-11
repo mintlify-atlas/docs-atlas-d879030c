@@ -1,0 +1,282 @@
+---
+title: kamal version
+description: Display the installed Kamal version
+---
+
+The `kamal version` command shows the currently installed version of Kamal.
+
+## Usage
+
+```bash
+kamal version
+```
+
+## Description
+
+This command prints the Kamal version number to the console. It's useful for:
+
+- Verifying your Kamal installation
+- Checking which version you're running
+- Troubleshooting version-specific issues
+- Confirming successful upgrades
+
+## Examples
+
+### Check Version
+
+```bash
+kamal version
+```
+
+Output:
+```
+2.10.1
+```
+
+### Version in Scripts
+
+Use in shell scripts to verify minimum version:
+
+```bash
+#!/bin/bash
+
+REQUIRED_VERSION="2.0.0"
+CURRENT_VERSION=$(kamal version)
+
+if [ "$CURRENT_VERSION" = "$REQUIRED_VERSION" ] || \
+   [ "$(printf '%s\n' "$REQUIRED_VERSION" "$CURRENT_VERSION" | sort -V | head -n1)" = "$REQUIRED_VERSION" ]; then
+  echo "Kamal version $CURRENT_VERSION is compatible"
+  kamal deploy
+else
+  echo "Error: Kamal $REQUIRED_VERSION or higher required"
+  exit 1
+fi
+```
+
+### Compare Versions
+
+Check local vs server versions:
+
+```bash
+# Local version
+kamal version
+
+# Version used on server (from last deploy)
+kamal app exec "echo $KAMAL_VERSION"
+```
+
+## Version Format
+
+Kamal uses semantic versioning (SemVer):
+
+```
+MAJOR.MINOR.PATCH
+```
+
+Example: `2.10.1`
+
+- **MAJOR** (2) - Incompatible API changes
+- **MINOR** (10) - New functionality, backward compatible
+- **PATCH** (1) - Bug fixes, backward compatible
+
+## Checking for Updates
+
+### Using RubyGems
+
+Check if a newer version is available:
+
+```bash
+gem list kamal --remote
+```
+
+### Upgrade Kamal
+
+Upgrade to the latest version:
+
+```bash
+gem update kamal
+```
+
+Upgrade to a specific version:
+
+```bash
+gem install kamal -v 2.10.1
+```
+
+### Using Bundler
+
+If Kamal is in your Gemfile:
+
+```bash
+# Update to latest version allowed by Gemfile
+bundle update kamal
+
+# Check current bundled version
+bundle exec kamal version
+```
+
+## Version-Specific Features
+
+<Note>
+Some Kamal features are only available in specific versions. Check the [changelog](https://github.com/basecamp/kamal) for version-specific details.
+</Note>
+
+### Major Version Changes
+
+- **Kamal 2.0** - Introduced kamal-proxy (replacing Traefik)
+- **Kamal 1.x** - Used Traefik as reverse proxy
+
+### Upgrade Compatibility
+
+When upgrading from Kamal 1.x to 2.x:
+
+```bash
+# Check current version
+kamal version
+
+# Upgrade Kamal
+gem update kamal
+
+# Run upgrade command to migrate from Traefik to kamal-proxy
+kamal upgrade
+```
+
+## Related Commands
+
+- [`kamal upgrade`](/commands/upgrade) - Upgrade from Kamal 1.x to 2.0
+- [`kamal config`](/commands/config) - View configuration
+- [`kamal docs`](/commands/docs) - View documentation
+
+## Troubleshooting
+
+### Command Not Found
+
+If `kamal version` returns "command not found":
+
+```bash
+# Check if Kamal is installed
+gem list kamal
+
+# Install Kamal
+gem install kamal
+
+# Check gem binaries path
+gem environment
+```
+
+### Wrong Version
+
+If the version is not what you expected:
+
+```bash
+# Check all installed versions
+gem list kamal
+
+# Uninstall specific version
+gem uninstall kamal -v 1.9.0
+
+# Install desired version
+gem install kamal -v 2.10.1
+
+# Verify
+kamal version
+```
+
+### Multiple Versions
+
+If you have multiple versions installed:
+
+```bash
+# List all versions
+gem list kamal
+
+# Use specific version
+gem exec -v 2.10.1 kamal version
+
+# Clean up old versions
+gem cleanup kamal
+```
+
+### Bundler Version Mismatch
+
+If using Bundler and version differs:
+
+```bash
+# Check Gemfile.lock
+cat Gemfile.lock | grep kamal
+
+# Use bundler version
+bundle exec kamal version
+
+# Update bundle
+bundle update kamal
+```
+
+## Version Information in CI/CD
+
+Include version checks in your CI/CD pipeline:
+
+<CodeGroup>
+```yaml GitHub Actions
+name: Deploy
+
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Kamal
+        run: gem install kamal
+      
+      - name: Check Kamal version
+        run: |
+          echo "Using Kamal version: $(kamal version)"
+          kamal version | grep -E "^2\."
+      
+      - name: Deploy
+        run: kamal deploy
+```
+
+```yaml GitLab CI
+deploy:
+  image: ruby:3.2
+  before_script:
+    - gem install kamal
+    - echo "Kamal version $(kamal version)"
+  script:
+    - kamal deploy
+  only:
+    - main
+```
+
+```groovy Jenkins
+pipeline {
+  agent any
+  stages {
+    stage('Check Version') {
+      steps {
+        sh 'gem install kamal'
+        sh 'kamal version'
+      }
+    }
+    stage('Deploy') {
+      steps {
+        sh 'kamal deploy'
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Getting Help
+
+For version-specific issues:
+
+1. Check the version: `kamal version`
+2. Review the [changelog](https://github.com/basecamp/kamal/releases)
+3. Search [GitHub issues](https://github.com/basecamp/kamal/issues)
+4. Join the [community discussions](https://github.com/basecamp/kamal/discussions)

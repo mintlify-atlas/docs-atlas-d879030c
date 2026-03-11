@@ -1,0 +1,480 @@
+---
+title: "Asset Bridging"
+description: "Managing static assets across deployments for zero-downtime updates"
+---
+
+# Asset Bridging
+
+Asset bridging ensures static assets (CSS, JavaScript, images, fonts) remain available during deployments, preventing broken pages and 404 errors when users access your site during a deployment.
+
+## The Asset Problem
+
+Without asset bridging, deployments can break your site:
+
+1. **Old Version Running**: Users loading pages served by the old container
+2. **New Deployment**: New container starts with new assets (e.g., `app-v2.css`)
+3. **Broken References**: Old pages reference old assets (e.g., `app-v1.css`) that no longer exist
+4. **404 Errors**: Users see broken styles, missing images, JavaScript errors
+
+<Warning>
+This problem is especially critical for:
+- Single Page Applications (SPAs)
+- Applications with fingerprinted/hashed asset names
+- Long-running deployments
+- High-traffic applications
+</Warning>
+
+## How Asset Bridging Works
+
+Kamal's asset bridging keeps assets from both old and new versions available during the transition:
+
+<Steps>
+  <Step title="Extract Assets">
+    During deployment, Kamal extracts static assets from the new container to the host filesystem
+  </Step>
+  
+  <Step title="Sync to Both Versions">
+    Assets are synced to both the new version's volume and the old version's volume
+  </Step>
+  
+  <Step title="Both Versions Accessible">
+    Old container serves old assets, new container serves both old and new assets
+  </Step>
+  
+  <Step title="Traffic Switches">
+    Once traffic switches to new container, all asset versions remain available
+  </Step>
+  
+  <Step title="Cleanup">
+    After deployment, old asset volumes are cleaned up
+  </Step>
+</Steps>
+
+**Reference**: See `lib/kamal/commands/app/assets.rb` for implementation.
+
+## Configuring Asset Bridging
+
+Asset bridging requires kamal-proxy (automatic with zero-downtime deployments):
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+    asset_path: /rails/public
+```
+
+**Reference**: See `lib/kamal/configuration/role.rb:129-155` for asset configuration.
+
+### Asset Path Syntax
+
+<Tabs>
+  <Tab title="Basic">
+    ```yaml
+    servers:
+      web:
+        asset_path: /app/public
+    ```
+    
+    Mount the container's `/app/public` directory to the host.
+  </Tab>
+  
+  <Tab title="With Options">
+    ```yaml
+    servers:
+      web:
+        asset_path: /app/public:ro
+    ```
+    
+    Mount with read-only option (recommended for security).
+  </Tab>
+  
+  <Tab title="Global Default">
+    ```yaml
+    # In root of deploy.yml
+    asset_path: /app/public
+    
+    servers:
+      web:
+        hosts:
+          - 192.168.1.10
+      
+      admin:
+        hosts:
+          - 192.168.1.11
+        asset_path: /app/admin/public
+    ```
+    
+    Set a global default, override per role.
+  </Tab>
+</Tabs>
+
+**Reference**: See `lib/kamal/configuration/role.rb:227-233` for asset path parsing.
+
+## Asset Requirements
+
+<Note>
+Asset bridging only works when:
+1. You're using kamal-proxy (the default for zero-downtime deployments)
+2. The role is configured with an `asset_path`
+3. The path exists in your container
+
+See `lib/kamal/configuration/role.rb:133-135` for requirement checks.
+</Note>
+
+## Asset Extraction Process
+
+During deployment, Kamal automatically:
+
+```bash
+# 1. Creates a temporary container from the new image
+docker container create --name myapp-web-assets myapp:v2
+
+# 2. Copies assets from container to host
+docker container cp myapp-web-assets:/app/public/. /var/lib/kamal/assets/extracted/web-v2
+
+# 3. Removes temporary container
+docker container rm myapp-web-assets
+```
+
+**Reference**: See `lib/kamal/commands/app/assets.rb:2-12` for extraction implementation.
+
+## Asset Volume Management
+
+Kamal creates version-specific asset volumes:
+
+```
+/var/lib/kamal/assets/
+├── extracted/
+│   ├── web-v1/          # Extracted assets from v1
+│   └── web-v2/          # Extracted assets from v2
+└── volumes/
+    ├── web-v1/          # Active volume for v1 container
+    └── web-v2/          # Active volume for v2 container
+```
+
+**Reference**: See `lib/kamal/configuration/role.rb:148-154` for volume paths.
+
+## Asset Syncing
+
+During deployment, assets are synced bidirectionally:
+
+```bash
+# New assets → New volume
+cp -rnT /var/lib/kamal/assets/extracted/web-v2 /var/lib/kamal/assets/volumes/web-v2
+
+# New assets → Old volume (for backward compatibility)
+cp -rnT /var/lib/kamal/assets/extracted/web-v2 /var/lib/kamal/assets/volumes/web-v1 || true
+
+# Old assets → New volume (for forward compatibility)
+cp -rnT /var/lib/kamal/assets/extracted/web-v1 /var/lib/kamal/assets/volumes/web-v2 || true
+```
+
+**Reference**: See `lib/kamal/commands/app/assets.rb:14-28` for sync implementation.
+
+<Expandable title="Why bidirectional syncing?">
+
+**New → Old**: Allows old containers to serve new assets for progressive enhancement
+
+**Old → New**: Allows new containers to serve old assets for users still on old pages
+
+Both copies use `cp -rn` (no-clobber), so files are never overwritten, only added.
+
+</Expandable>
+
+## Framework-Specific Configuration
+
+<Tabs>
+  <Tab title="Rails">
+    ```yaml
+    servers:
+      web:
+        asset_path: /rails/public
+    ```
+    
+    Rails compiles assets to `public/` by default. Common paths:
+    - `/rails/public` (if WORKDIR is `/rails`)
+    - `/app/public` (if WORKDIR is `/app`)
+  </Tab>
+  
+  <Tab title="Node.js/Express">
+    ```yaml
+    servers:
+      web:
+        asset_path: /app/public
+    ```
+    
+    Express typically serves static files from `public/`.
+  </Tab>
+  
+  <Tab title="Next.js">
+    ```yaml
+    servers:
+      web:
+        asset_path: /app/.next/static
+    ```
+    
+    Next.js static assets are in `.next/static/`.
+  </Tab>
+  
+  <Tab title="Django">
+    ```yaml
+    servers:
+      web:
+        asset_path: /app/staticfiles
+    ```
+    
+    Django's `collectstatic` outputs to `STATIC_ROOT` (typically `staticfiles/`).
+  </Tab>
+  
+  <Tab title="Laravel">
+    ```yaml
+    servers:
+      web:
+        asset_path: /var/www/html/public
+    ```
+    
+    Laravel's public assets are in `public/`.
+  </Tab>
+</Tabs>
+
+## Asset Volume Mounting
+
+Assets are mounted into containers as read-only volumes:
+
+```yaml
+servers:
+  web:
+    asset_path: /app/public:ro
+```
+
+Generated Docker mount:
+```bash
+docker run \
+  -v /var/lib/kamal/assets/volumes/web-v2:/app/public:ro \
+  myapp:v2
+```
+
+**Reference**: See `lib/kamal/configuration/role.rb:110-112` for volume args generation.
+
+## Handling Asset Compilation
+
+### Pre-compiled Assets (Recommended)
+
+Compile assets during Docker build:
+
+```dockerfile
+# Dockerfile
+FROM node:18 AS assets
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build  # Compile assets
+
+FROM ruby:3.2
+WORKDIR /rails
+COPY --from=assets /app/public ./public
+# ...
+```
+
+Benefits:
+- Assets compiled once during build
+- Faster deployments
+- Consistent across environments
+
+### Runtime Asset Compilation
+
+If you must compile assets at runtime:
+
+```yaml
+servers:
+  web:
+    asset_path: /app/public
+
+# In your deploy hooks
+hooks:
+  pre-deploy: bin/rails assets:precompile
+```
+
+<Warning>
+Runtime compilation increases deployment time and can cause issues if assets change between container start and asset extraction.
+</Warning>
+
+## Asset Cleanup
+
+Old asset volumes are automatically cleaned up after deployment:
+
+```bash
+# Removes all asset directories except the current version
+find /var/lib/kamal/assets/extracted -maxdepth 1 -name 'web-*' ! -name 'web-v2' -exec rm -rf {} +
+find /var/lib/kamal/assets/volumes -maxdepth 1 -name 'web-*' ! -name 'web-v2' -exec rm -rf {} +
+```
+
+**Reference**: See `lib/kamal/commands/app/assets.rb:30-46` for cleanup implementation.
+
+## CDN Integration
+
+For production deployments, consider using a CDN:
+
+```yaml
+# Upload assets to CDN during build
+# Then serve from CDN instead of container
+
+servers:
+  web:
+    # No asset_path needed if using CDN
+    env:
+      ASSET_HOST: https://cdn.example.com
+```
+
+Benefits:
+- Faster asset delivery
+- Reduced server load
+- Better caching
+- No need for asset bridging
+
+## Troubleshooting Asset Issues
+
+### Assets Not Found (404)
+
+<AccordionGroup>
+  <Accordion title="Check asset path configuration">
+    ```bash
+    # SSH to server and verify path
+    kamal app exec -i 'ls -la /app/public'
+    
+    # Check if path exists in container
+    docker run --rm myapp:latest ls -la /app/public
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify asset extraction">
+    ```bash
+    # SSH to server
+    ls -la /var/lib/kamal/assets/extracted/
+    ls -la /var/lib/kamal/assets/volumes/
+    
+    # Should see directories for current version
+    ```
+  </Accordion>
+  
+  <Accordion title="Check volume mounts">
+    ```bash
+    # Inspect running container
+    docker inspect myapp-web-v2 | grep -A 10 Mounts
+    
+    # Should show asset volume mounted
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Assets Not Updating
+
+1. **Clear asset cache**:
+   ```bash
+   # On server
+   rm -rf /var/lib/kamal/assets/*
+   
+   # Redeploy
+   kamal deploy
+   ```
+
+2. **Check Docker build**:
+   ```bash
+   # Ensure assets are in the image
+   docker run --rm myapp:latest ls -la /app/public
+   ```
+
+3. **Verify extraction**:
+   ```bash
+   # Check extracted assets
+   ls -la /var/lib/kamal/assets/extracted/web-latest/
+   ```
+
+### Disk Space Issues
+
+```bash
+# Check disk usage
+df -h
+
+# Check asset directory size
+du -sh /var/lib/kamal/assets/*
+
+# Manual cleanup if needed
+kamal app remove -y
+rm -rf /var/lib/kamal/assets/*
+```
+
+## Best Practices
+
+<Check>✓ Use fingerprinted/hashed asset names for cache busting</Check>
+<Check>✓ Compile assets during Docker build, not at runtime</Check>
+<Check>✓ Mount asset volumes as read-only (`:ro`)</Check>
+<Check>✓ Use a CDN for production deployments</Check>
+<Check>✓ Keep asset sizes small (compress images, minify JS/CSS)</Check>
+<Check>✓ Test deployments in staging environment first</Check>
+
+## Asset Bridging Without Kamal-Proxy
+
+<Warning>
+Asset bridging requires kamal-proxy. Without it, you'll need to handle assets differently:
+
+- Use a CDN exclusively
+- Accept brief asset 404s during deployments
+- Use rolling deployments with load balancer health checks
+</Warning>
+
+**Reference**: Asset bridging check in `lib/kamal/configuration/role.rb:133-135`.
+
+## Performance Considerations
+
+### Asset Extraction Time
+
+Extraction adds ~5-30 seconds to deployments depending on:
+- Number of assets
+- Asset sizes
+- Disk I/O speed
+
+### Disk Usage
+
+Asset volumes require additional disk space:
+- **2x asset size** minimum (extracted + volume)
+- **3x asset size** during deployment (old + new versions)
+
+Monitor disk usage:
+```bash
+du -sh /var/lib/kamal/assets
+```
+
+### Network Impact
+
+Asset syncing uses local filesystem operations, so network impact is minimal. However, initial asset extraction from container uses Docker's copy mechanism.
+
+## Advanced Asset Configuration
+
+### Multiple Asset Paths
+
+For complex applications with multiple asset directories:
+
+```yaml
+servers:
+  web:
+    asset_path: /app/public:ro
+    # Additional mounts via volume configuration
+    volumes:
+      - /var/lib/kamal/media:/app/media:ro
+```
+
+### Asset Versioning Strategy
+
+```yaml
+# Use git SHA for asset versions
+env:
+  ASSET_VERSION: <%= `git rev-parse HEAD`.strip %>
+```
+
+In your application, append version to asset URLs:
+```
+/assets/app.js?v=abc123
+```

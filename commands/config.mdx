@@ -1,0 +1,390 @@
+---
+title: kamal config
+description: Display combined configuration including resolved secrets
+---
+
+The `kamal config` command displays your complete deployment configuration with all secrets and environment variables resolved.
+
+## Overview
+
+Config shows the final merged configuration that Kamal will use for deployment, including values from `config/deploy.yml` and `.kamal/secrets`.
+
+<Warning>
+  **Security Notice**: This command displays decrypted secrets. Run it carefully and avoid sharing the output.
+</Warning>
+
+## Usage
+
+```bash
+kamal config
+```
+
+## How It Works
+
+The config command outputs a YAML representation of your complete configuration:
+
+```ruby
+# From main.rb:122-125
+def config
+  run_locally do
+    puts Kamal::Utils.redacted(KAMAL.config.to_h).to_yaml
+  end
+end
+```
+
+<Note>
+  While the command is called "redacted", it actually shows most values. Some extremely sensitive values may be partially masked.
+</Note>
+
+## Example Output
+
+```bash
+$ kamal config
+```
+
+```yaml
+---
+service: my-app
+image: myuser/my-app
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+      - 192.168.1.11
+    port: 3000
+    options:
+      memory: 2gb
+proxy:
+  ssl: true
+  host: app.example.com
+  app_port: 3000
+registry:
+  server: docker.io
+  username: myuser
+  password: "[REDACTED]"
+env:
+  SECRET_KEY_BASE: "[REDACTED]"
+  DATABASE_URL: "[REDACTED]"
+  RAILS_ENV: production
+builder:
+  arch: amd64
+  args:
+    RUBY_VERSION: 3.3.0
+ssh:
+  user: deploy
+  keys:
+    - /home/user/.ssh/id_rsa
+version: 20240311-103045-abc123def
+volumes:
+  - app_storage:/rails/storage
+accessories:
+  redis:
+    image: valkey/valkey:8
+    host: 192.168.1.20
+    port: 6379
+    directories:
+      - data:/data
+```
+
+## Use Cases
+
+### Verify Configuration
+
+Ensure your configuration is parsed correctly:
+
+```bash
+kamal config | head -n 20
+```
+
+### Check Secret Resolution
+
+Verify that secrets from `.kamal/secrets` are loaded:
+
+```bash
+# Check if registry password is set
+kamal config | grep -A 2 "registry:"
+
+# Check environment variables
+kamal config | grep -A 10 "env:"
+```
+
+### Debug Deployment Issues
+
+Inspect the final configuration when troubleshooting:
+
+```bash
+# Save to file for analysis
+kamal config > /tmp/kamal-config.yml
+
+# Check specific settings
+kamal config | grep "servers:"
+```
+
+### Validate Before Deployment
+
+Check configuration before running setup or deploy:
+
+```bash
+# Verify configuration is valid
+kamal config > /dev/null && echo "Configuration valid"
+
+# Or catch errors
+if kamal config > /dev/null 2>&1; then
+  kamal deploy
+else
+  echo "Configuration error - fix before deploying"
+fi
+```
+
+## Configuration Sources
+
+The config command merges values from multiple sources:
+
+<Steps>
+  <Step title="Base Configuration">
+    Primary settings from `config/deploy.yml`:
+    
+    ```yaml
+    service: my-app
+    image: myuser/my-app
+    servers:
+      web:
+        - 192.168.1.10
+    ```
+  </Step>
+  
+  <Step title="Secrets">
+    Credentials from `.kamal/secrets`:
+    
+    ```bash
+    KAMAL_REGISTRY_PASSWORD="secret123"
+    SECRET_KEY_BASE="key456"
+    ```
+  </Step>
+  
+  <Step title="Environment Overrides">
+    Environment-specific files like `config/deploy.production.yml`:
+    
+    ```yaml
+    servers:
+      web:
+        - 203.0.113.10  # Production IP
+    ```
+  </Step>
+  
+  <Step title="Computed Values">
+    Generated values like version tags:
+    
+    ```yaml
+    version: 20240311-103045-abc123def
+    ```
+  </Step>
+</Steps>
+
+## Redacted Values
+
+Sensitive values are partially redacted in the output:
+
+```yaml
+registry:
+  password: "[REDACTED]"
+
+env:
+  SECRET_KEY_BASE: "[REDACTED]"
+  DATABASE_URL: "postgresql://user:[REDACTED]@host:5432/db"
+```
+
+<Info>
+  The level of redaction varies. Some values show partial information while truly sensitive data is fully masked.
+</Info>
+
+## Filtering Output
+
+Use standard Unix tools to filter config output:
+
+```bash
+# Show only server configuration
+kamal config | grep -A 10 "servers:"
+
+# Check specific role
+kamal config | grep -A 5 "worker:"
+
+# Find all environment variables
+kamal config | grep -A 20 "env:"
+
+# Export to file
+kamal config > current-config.yml
+
+# Compare configurations
+kamal config > /tmp/new-config.yml
+diff old-config.yml /tmp/new-config.yml
+```
+
+## Configuration Errors
+
+If configuration is invalid, you'll see error messages:
+
+```bash
+$ kamal config
+
+Error: Missing required configuration key: servers
+```
+
+Common errors:
+
+### Missing Required Fields
+
+```
+Error: Missing required configuration key: service
+Error: Missing required configuration key: image
+```
+
+**Solution**: Add required fields to `config/deploy.yml`
+
+### Invalid YAML Syntax
+
+```
+Error: Invalid YAML in config/deploy.yml
+```
+
+**Solution**: Check YAML syntax:
+```bash
+yaml-lint config/deploy.yml
+```
+
+### Unresolved Secrets
+
+```
+Error: Secret KAMAL_REGISTRY_PASSWORD not found
+```
+
+**Solution**: Add the secret to `.kamal/secrets`:
+```bash
+echo 'KAMAL_REGISTRY_PASSWORD="your-password"' >> .kamal/secrets
+```
+
+## Security Considerations
+
+<Warning>
+  **Important Security Notes**:
+  
+  1. Config output contains sensitive information
+  2. Don't commit config output to version control
+  3. Avoid sharing config output publicly
+  4. Be careful when piping to files or other commands
+  5. Clear terminal history after viewing secrets
+</Warning>
+
+### Safe Usage
+
+```bash
+# Verify config without displaying secrets
+kamal config > /dev/null && echo "Valid"
+
+# Check specific non-sensitive values
+kamal config | grep "service:"
+kamal config | grep "servers:"
+
+# Review in secure environment
+kamal config | less
+# Press 'q' to quit and clear
+```
+
+### Unsafe Usage
+
+```bash
+# DON'T: Share full config output
+kamal config | pbcopy  # Copies secrets to clipboard
+
+# DON'T: Commit config output
+kamal config > config.yml
+git add config.yml  # Never do this!
+
+# DON'T: Send in logs or error reports
+kamal config 2>&1 | mail support@example.com
+```
+
+## Environment-Specific Configuration
+
+View configuration for specific environments:
+
+```bash
+# Default (usually production)
+kamal config
+
+# Staging environment
+kamal config -d staging
+
+# Using environment-specific file
+KAMAL_ENV=staging kamal config
+```
+
+## Comparing Configurations
+
+Compare different environment configurations:
+
+```bash
+# Save production config
+kamal config > prod-config.yml
+
+# Save staging config
+kamal config -d staging > staging-config.yml
+
+# Compare
+diff prod-config.yml staging-config.yml
+```
+
+## Integration with Other Commands
+
+Config is useful before running other commands:
+
+```bash
+# Verify config before setup
+kamal config && kamal setup
+
+# Check config before deploy
+kamal config | grep "version:" && kamal deploy
+
+# Validate and deploy
+if kamal config > /dev/null 2>&1; then
+  echo "Configuration valid, deploying..."
+  kamal deploy
+else
+  echo "Configuration invalid, aborting"
+  exit 1
+fi
+```
+
+## Programmatic Usage
+
+Parse config output in scripts:
+
+```bash
+#!/bin/bash
+
+# Extract version
+VERSION=$(kamal config | grep "^version:" | cut -d' ' -f2)
+echo "Deploying version: $VERSION"
+
+# Check if redis is configured
+if kamal config | grep -q "redis:"; then
+  echo "Redis accessory configured"
+fi
+
+# Verify required secrets are set
+if kamal config | grep -q "\[REDACTED\]"; then
+  echo "Secrets are configured"
+else
+  echo "Warning: Some secrets may be missing"
+fi
+```
+
+## Related Commands
+
+- [`kamal init`](/commands/init) - Create initial configuration
+- [`kamal secrets`](/commands/secrets) - Manage secrets
+- [`kamal audit`](/commands/audit) - View deployment audit log
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/main.rb:121-126`

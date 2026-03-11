@@ -1,0 +1,297 @@
+---
+title: "Kamal Proxy Deep Dive"
+description: "Advanced guide to kamal-proxy architecture, configuration, and zero-downtime deployments"
+---
+
+# Kamal Proxy Deep Dive
+
+Kamal-proxy is the core component that enables zero-downtime deployments in Kamal. It's a lightweight HTTP/HTTPS reverse proxy that seamlessly switches traffic between container versions during deployments.
+
+## How Kamal-Proxy Works
+
+Kamal-proxy sits in front of your application containers and intelligently routes requests:
+
+1. **Deploy Phase**: New container starts while old container continues serving traffic
+2. **Health Checks**: Proxy verifies new container is healthy before switching traffic
+3. **Traffic Switching**: Proxy begins routing new requests to the new container
+4. **Draining**: Old container finishes processing in-flight requests
+5. **Cleanup**: Old container is stopped and removed
+
+<Note>
+The default deploy timeout is configured via `deploy_timeout` in your `deploy.yml`. This determines how long kamal-proxy waits for the new container to become healthy.
+</Note>
+
+## Proxy Configuration
+
+Kamal-proxy is configured through the `proxy` section in `config/deploy.yml`:
+
+```yaml
+proxy:
+  # Port your application listens on inside the container
+  app_port: 3000
+  
+  # Enable SSL with automatic Let's Encrypt certificates
+  ssl: true
+  
+  # Hostnames to respond to
+  hosts:
+    - example.com
+    - www.example.com
+  
+  # Response timeout for backend requests
+  response_timeout: 60
+```
+
+### SSL Configuration
+
+Kamal-proxy supports automatic SSL certificate management via Let's Encrypt:
+
+<Tabs>
+  <Tab title="Automatic SSL">
+    ```yaml
+    proxy:
+      ssl: true
+      hosts:
+        - example.com
+    ```
+    
+    Kamal-proxy automatically obtains and renews Let's Encrypt certificates for the specified hosts.
+  </Tab>
+  
+  <Tab title="Custom Certificates">
+    ```yaml
+    proxy:
+      ssl:
+        certificate_pem: CERTIFICATE_PEM
+        private_key_pem: PRIVATE_KEY_PEM
+      hosts:
+        - example.com
+    ```
+    
+    Reference secret keys that contain your custom PEM-encoded certificate and private key. Store the actual certificates in `.kamal/secrets`.
+  </Tab>
+  
+  <Tab title="SSL Redirect">
+    ```yaml
+    proxy:
+      ssl: true
+      ssl_redirect: true
+      hosts:
+        - example.com
+    ```
+    
+    Automatically redirect HTTP requests to HTTPS.
+  </Tab>
+</Tabs>
+
+<Warning>
+SSL is only supported on a single server unless you provide custom certificates. For multi-server deployments with automatic Let's Encrypt, you must use custom certificates to avoid rate limiting.
+</Warning>
+
+## Health Check Configuration
+
+Kamal-proxy continuously health checks your containers to ensure they're ready to receive traffic:
+
+```yaml
+proxy:
+  healthcheck:
+    path: /health
+    interval: 5
+    timeout: 3
+```
+
+**Reference**: See `lib/kamal/configuration/proxy.rb:78-80` for health check implementation.
+
+- **path**: HTTP endpoint to check (default: `/`)
+- **interval**: Seconds between health checks (default: 5s)
+- **timeout**: Seconds to wait for response (default: 3s)
+
+## Request/Response Buffering
+
+Kamal-proxy can buffer requests and responses to handle slow clients or backends:
+
+```yaml
+proxy:
+  buffering:
+    requests: true
+    responses: true
+    memory: "64k"
+    max_request_body: "100m"
+    max_response_body: "100m"
+```
+
+**Reference**: See `lib/kamal/configuration/proxy.rb:82-86` for buffering options.
+
+<Expandable title="When to disable buffering">
+  
+**Disable request buffering** for:
+- Streaming uploads
+- Real-time file uploads
+- Applications that need to process request bodies as they arrive
+
+**Disable response buffering** for:
+- Server-sent events (SSE)
+- Streaming responses
+- Real-time data feeds
+
+```yaml
+proxy:
+  buffering:
+    requests: false
+    responses: false
+```
+
+</Expandable>
+
+## Path-Based Routing
+
+Route specific URL paths to your application:
+
+```yaml
+proxy:
+  path_prefixes:
+    - /api
+    - /webhooks
+  strip_path_prefix: true
+```
+
+**Reference**: See `lib/kamal/configuration/proxy.rb:66-88` for path routing.
+
+- **path_prefixes**: Only route requests matching these prefixes
+- **strip_path_prefix**: Remove the prefix before forwarding to your app
+
+## Custom Headers
+
+Forward specific headers to your application:
+
+```yaml
+proxy:
+  forward_headers:
+    - X-Request-ID
+    - X-Forwarded-User
+```
+
+## Logging Configuration
+
+Control which headers are logged by kamal-proxy:
+
+```yaml
+proxy:
+  logging:
+    request_headers:
+      - Cache-Control
+      - Last-Modified
+      - User-Agent
+      - Authorization
+    response_headers:
+      - Content-Type
+      - X-Response-Time
+```
+
+**Reference**: Default request headers defined in `lib/kamal/configuration/proxy.rb:4`.
+
+## Deployment Timeouts
+
+Control how long kamal-proxy waits during different phases:
+
+```yaml
+# In the root of deploy.yml
+deploy_timeout: 30  # Seconds to wait for new container to become healthy
+drain_timeout: 30   # Seconds to wait for in-flight requests to complete
+```
+
+**Reference**: See `lib/kamal/configuration/proxy.rb:76-77` for timeout implementation.
+
+<Note>
+When using kamal-proxy, the `drain_timeout` is handled by the proxy itself, so containers can stop immediately after the proxy has drained traffic.
+</Note>
+
+## Custom Error Pages
+
+Serve custom error pages when your application is unavailable:
+
+```yaml
+error_pages:
+  path: config/error_pages
+```
+
+Place your custom `502.html`, `503.html`, and `504.html` files in the specified directory.
+
+**Reference**: See `lib/kamal/configuration/proxy.rb:125-127` for error pages implementation.
+
+## Role-Specific Proxy Configuration
+
+Different roles can have different proxy configurations:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+    proxy:
+      app_port: 3000
+      hosts:
+        - example.com
+  
+  api:
+    hosts:
+      - 192.168.1.11
+    proxy:
+      app_port: 4000
+      path_prefixes:
+        - /api
+      strip_path_prefix: true
+```
+
+**Reference**: See `lib/kamal/configuration/role.rb:163-184` for role-specific proxy initialization.
+
+## Advanced Use Cases
+
+### Multiple Applications on One Server
+
+Use path prefixes to run multiple applications behind a single proxy:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+    proxy:
+      hosts:
+        - example.com
+  
+  admin:
+    hosts:
+      - 192.168.1.10
+    proxy:
+      path_prefixes:
+        - /admin
+```
+
+### Streaming Applications
+
+For WebSocket or SSE applications, disable buffering:
+
+```yaml
+proxy:
+  response_timeout: 300  # Longer timeout for persistent connections
+  buffering:
+    responses: false
+```
+
+## Proxy Container Management
+
+The kamal-proxy container is named `kamal-proxy` and runs on port 80/443:
+
+```bash
+# View proxy logs
+kamal proxy logs
+
+# Restart proxy
+kamal proxy restart
+
+# Check proxy status
+kamal proxy status
+```
+
+**Reference**: Container name constant defined in `lib/kamal/configuration/proxy.rb:5`.

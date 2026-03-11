@@ -1,80 +1,310 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Deploy your first application with Kamal in under 10 minutes"
 ---
 
-## Get started in three steps
+This guide will walk you through deploying your first web application using Kamal. By the end, you'll have a working deployment pipeline with zero-downtime updates.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before starting, ensure you have:
+
+- [Kamal installed](/installation) on your local machine
+- A server with SSH access (root or sudo privileges)
+- A containerized application with a Dockerfile
+- A Docker registry account (Docker Hub, GitHub Container Registry, etc.)
+
+## Step 1: Initialize Kamal
+
+In your application directory, run:
+
+```bash
+kamal init
+```
+
+This creates:
+- `config/deploy.yml` - Main configuration file
+- `.kamal/secrets` - Secrets file for sensitive data
+- `.kamal/hooks/` - Directory for deployment hooks (optional)
+
+## Step 2: Configure Your Deployment
+
+Edit `config/deploy.yml`:
+
+```yaml config/deploy.yml
+# Name of your application
+service: my-app
+
+# Docker image name
+image: your-username/my-app
+
+# Deploy to these servers
+servers:
+  web:
+    - 192.168.1.10
+
+# Container registry
+registry:
+  server: ghcr.io
+  username: your-username
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+# Proxy configuration for zero-downtime deployments
+proxy:
+  ssl: true
+  host: app.example.com
+```
+
+## Step 3: Add Your Secrets
+
+Edit `.kamal/secrets` with your registry password:
+
+```bash .kamal/secrets
+KAMAL_REGISTRY_PASSWORD=your_registry_token_here
+```
+
+<Warning>
+Never commit `.kamal/secrets` to version control. Add it to your `.gitignore`.
+</Warning>
+
+## Step 4: Ensure Your Dockerfile is Ready
+
+Make sure your application has a Dockerfile. Here's a minimal example for a Rails app:
+
+```dockerfile Dockerfile
+FROM ruby:3.2
+
+WORKDIR /app
+
+COPY Gemfile Gemfile.lock ./
+RUN bundle install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["rails", "server", "-b", "0.0.0.0"]
+```
+
+## Step 5: Run Setup
+
+The setup command bootstraps your servers and performs the first deployment:
+
+```bash
+kamal setup
+```
+
+<Steps>
+  <Step title="Bootstrap servers">
+    Installs Docker on your servers if not already installed
+  </Step>
+  <Step title="Create kamal-proxy">
+    Sets up the proxy for zero-downtime deployments
+  </Step>
+  <Step title="Build and push image">
+    Builds your Docker image and pushes it to the registry
+  </Step>
+  <Step title="Deploy application">
+    Pulls the image and starts containers on your servers
+  </Step>
+  <Step title="Health checks">
+    Verifies containers are running and healthy
+  </Step>
+</Steps>
+
+### What Happens During Setup
+
+```bash Terminal output
+Ensure Docker is installed...
+  INFO [192.168.1.10] Running /usr/bin/env docker version
+
+Build and push app image...
+  INFO Building Docker image with docker buildx...
+  INFO Pushing image to ghcr.io/your-username/my-app:abc123
+
+Ensure kamal-proxy is running...
+  INFO [192.168.1.10] Running docker container start kamal-proxy
+
+Deploy application...
+  INFO [192.168.1.10] Running docker run...
+  INFO [192.168.1.10] Container started successfully
+  INFO [192.168.1.10] Health check passed
+
+Prune old containers and images...
+  INFO [192.168.1.10] Cleaning up unused images
+```
+
+## Step 6: Deploy Updates
+
+For subsequent deployments, use the `deploy` command:
+
+```bash
+kamal deploy
+```
+
+This performs a zero-downtime deployment:
+
+<Steps>
+  <Step title="Build new image">
+    Creates a new Docker image with your latest code
+  </Step>
+  <Step title="Push to registry">
+    Uploads the image to your container registry
+  </Step>
+  <Step title="Pull on servers">
+    Downloads the new image on all servers
+  </Step>
+  <Step title="Start new containers">
+    Launches containers with the new version
+  </Step>
+  <Step title="Health checks">
+    Waits for new containers to be healthy
+  </Step>
+  <Step title="Switch traffic">
+    Routes traffic to new containers
+  </Step>
+  <Step title="Stop old containers">
+    Gracefully shuts down previous version
+  </Step>
+</Steps>
+
+## Step 7: Verify Your Deployment
+
+Check that everything is running:
+
+```bash
+# View all containers
+kamal app containers
+
+# Check application logs
+kamal app logs
+
+# View proxy status
+kamal proxy details
+```
+
+## Common Tasks
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Rolling back a deployment">
+    If something goes wrong, rollback to a previous version:
+
+    ```bash
+    # List available versions
+    kamal app containers
+
+    # Rollback to specific version
+    kamal rollback abc123
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+
+  <Accordion title="Viewing logs">
+    Monitor your application in real-time:
+
+    ```bash
+    # Follow logs
+    kamal app logs --follow
+
+    # Search logs
+    kamal app logs --grep "ERROR"
+
+    # Logs from specific time
+    kamal app logs --since 1h
+    ```
+  </Accordion>
+
+  <Accordion title="Executing commands">
+    Run commands inside your containers:
+
+    ```bash
+    # One-off command
+    kamal app exec 'bin/rails db:migrate'
+
+    # Interactive console
+    kamal app exec --interactive 'bin/rails console'
+    ```
+  </Accordion>
+
+  <Accordion title="Managing environment variables">
+    Update environment variables:
+
+    ```yaml config/deploy.yml
+    env:
+      clear:
+        DATABASE_URL: postgresql://db:5432/app
+      secret:
+        - RAILS_MASTER_KEY
+    ```
+
+    Then push changes:
+
+    ```bash
+    kamal env push
+    kamal app boot
+    ```
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+## Troubleshooting
 
 <AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Accordion title="Build fails">
+    **Issue**: Docker build fails during setup
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    **Solution**:
+    - Check your Dockerfile syntax
+    - Ensure all dependencies are available
+    - Try building locally: `docker build -t my-app .`
+    - Use `kamal build push --verbose` for detailed output
+  </Accordion>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
+  <Accordion title="SSH connection fails">
+    **Issue**: Cannot connect to servers
+
+    **Solution**:
+    - Verify SSH key permissions: `chmod 600 ~/.ssh/id_rsa`
+    - Test SSH manually: `ssh root@192.168.1.10`
+    - Check firewall rules on your server
+    - Ensure server accepts key-based authentication
+  </Accordion>
+
+  <Accordion title="Container won't start">
+    **Issue**: Container starts but immediately exits
+
+    **Solution**:
+    - Check logs: `kamal app logs`
+    - Verify health check endpoint (if configured)
+    - Ensure the app listens on the correct port
+    - Check environment variables are set correctly
+  </Accordion>
+
+  <Accordion title="Zero-downtime not working">
+    **Issue**: Deployment causes downtime
+
+    **Solution**:
+    - Verify proxy is running: `kamal proxy details`
+    - Check health check configuration
+    - Ensure app responds to health checks quickly
+    - Review drain timeout settings in config
   </Accordion>
 </AccordionGroup>
 
-### Step 3: Go live
+## Next Steps
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Now that you've deployed your first application, explore advanced features:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn about advanced configuration options
+  </Card>
+  <Card title="Commands" icon="terminal" href="/commands/deploy">
+    Explore all available Kamal commands
+  </Card>
+  <Card title="Accessories" icon="puzzle-piece" href="/guides/accessories-setup">
+    Set up databases, Redis, and other services
+  </Card>
+  <Card title="Deployment Hooks" icon="hook" href="/configuration/hooks">
+    Customize deployments with hooks
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

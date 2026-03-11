@@ -1,0 +1,248 @@
+---
+title: kamal deploy
+description: Deploy your application to servers with zero downtime
+---
+
+The `kamal deploy` command builds your Docker image, pushes it to the registry, and deploys it to your servers with zero downtime using rolling deployments.
+
+## Usage
+
+```bash
+kamal deploy [OPTIONS]
+```
+
+## Description
+
+The deploy command is the primary way to ship new versions of your application. It performs a complete deployment workflow:
+
+1. **Build and push** - Creates a Docker image and pushes to registry
+2. **Ensure proxy** - Verifies kamal-proxy is running
+3. **Boot accessories** - Starts any configured accessories (if specified)
+4. **Detect stale containers** - Identifies and stops old containers
+5. **Boot application** - Starts new containers with zero downtime
+6. **Prune resources** - Removes old containers and images
+
+Kamal uses a rolling deployment strategy to ensure zero downtime. New containers are started before old ones are stopped.
+
+<Note>
+For the first deployment, use [`kamal setup`](/commands/setup) instead to bootstrap servers.
+</Note>
+
+## Options
+
+<ParamField path="--skip-push" type="boolean" default={false}>
+  Skip building and pushing the Docker image. Instead, pull the existing image from the registry.
+  
+  **Alias:** `-P`
+  
+  Useful when the image has already been built and pushed in a CI/CD pipeline.
+</ParamField>
+
+<ParamField path="--no-cache" type="boolean" default={false}>
+  Build the Docker image without using Docker's build cache.
+  
+  This forces a complete rebuild from scratch, ensuring all dependencies are fresh.
+</ParamField>
+
+## Examples
+
+### Standard Deployment
+
+Deploy the latest version of your application:
+
+```bash
+kamal deploy
+```
+
+This builds a new image, pushes it to the registry, and performs a rolling deployment.
+
+### Deploy Pre-built Image
+
+If you've already built and pushed your image (e.g., in CI):
+
+```bash
+kamal deploy --skip-push
+```
+
+```bash
+kamal deploy -P
+```
+
+### Force Clean Build
+
+Deploy with a fresh build, ignoring all cached layers:
+
+```bash
+kamal deploy --no-cache
+```
+
+### Combined Options
+
+Skip push and use no cache (if building separately):
+
+```bash
+kamal deploy --skip-push --no-cache
+```
+
+## Expected Output
+
+<CodeGroup>
+```bash Standard Deployment
+Build and push app image...
+  INFO [local] Building Docker image
+  INFO [local] docker build --platform linux/amd64 -t myapp:2024-03-11-abc123 .
+  Step 1/10 : FROM ruby:3.2
+  Step 2/10 : WORKDIR /app
+  ...
+  INFO [local] Pushing image to registry
+  INFO [local] docker push myapp:2024-03-11-abc123
+  
+Ensure kamal-proxy is running...
+  INFO [192.168.1.10] kamal-proxy is healthy
+  INFO [192.168.1.11] kamal-proxy is healthy
+  
+Detect stale containers...
+  INFO [192.168.1.10] Found 1 stale container
+  INFO [192.168.1.10] Stopping myapp-web-2024-03-10-xyz789
+  
+Booting app containers...
+  INFO [192.168.1.10] Starting myapp-web-2024-03-11-abc123
+  INFO [192.168.1.11] Starting myapp-web-2024-03-11-abc123
+  INFO [192.168.1.10] Container is healthy
+  INFO [192.168.1.11] Container is healthy
+  
+Prune old containers and images...
+  INFO [192.168.1.10] Removed 2 containers, freed 1.2 GB
+  INFO [192.168.1.11] Removed 1 container, freed 650 MB
+  
+Finished in 67.5 seconds
+```
+
+```bash With Skip Push
+Pull app image...
+  INFO [192.168.1.10] docker pull myapp:2024-03-11-abc123
+  INFO [192.168.1.11] docker pull myapp:2024-03-11-abc123
+  
+Ensure kamal-proxy is running...
+  INFO kamal-proxy is healthy on all hosts
+  
+Detect stale containers...
+  INFO No stale containers found
+  
+Booting app containers...
+  INFO [192.168.1.10] Container started successfully
+  INFO [192.168.1.11] Container started successfully
+  
+Prune old containers and images...
+  INFO Cleanup complete
+  
+Finished in 23.1 seconds
+```
+</CodeGroup>
+
+## Deployment Workflow
+
+### Zero Downtime Rolling Deployment
+
+Kamal ensures zero downtime by:
+
+1. **Starting new containers** while old ones are still running
+2. **Health checking** new containers before switching traffic
+3. **Routing traffic** to new containers via kamal-proxy
+4. **Stopping old containers** only after new ones are healthy
+
+### Deploy Lock
+
+<Warning>
+Kamal acquires a deploy lock during deployment to prevent concurrent deployments that could conflict.
+</Warning>
+
+If a deployment is already in progress:
+
+```bash
+# Check lock status
+kamal lock status
+
+# Wait for current deployment to finish, or release if stuck
+kamal lock release
+```
+
+## Hooks
+
+The deploy command executes hooks at key points:
+
+- **pre-deploy** - Before deployment starts (secrets available)
+- **post-deploy** - After successful deployment (includes runtime duration)
+
+Example hook usage:
+
+```bash .kamal/hooks/pre-deploy
+#!/bin/sh
+echo "Starting deployment at $(date)"
+curl -X POST https://api.example.com/deployments/start
+```
+
+```bash .kamal/hooks/post-deploy
+#!/bin/sh
+echo "Deployment completed in $KAMAL_RUNTIME seconds"
+curl -X POST https://api.example.com/deployments/complete
+```
+
+<Note>
+Hooks must be executable: `chmod +x .kamal/hooks/*`
+</Note>
+
+## Related Commands
+
+- [`kamal setup`](/commands/setup) - First-time deployment with server bootstrapping
+- [`kamal redeploy`](/commands/redeploy) - Faster deployment without pruning
+- [`kamal rollback`](/commands/rollback) - Revert to a previous version
+- [`kamal app boot`](/commands/app) - Boot app containers only
+
+## Troubleshooting
+
+### Build Fails
+
+```bash
+# Check Dockerfile syntax locally
+docker build .
+
+# Try without cache
+kamal deploy --no-cache
+```
+
+### Push Fails
+
+```bash
+# Verify registry credentials
+kamal registry login
+
+# Check registry configuration
+kamal config
+```
+
+### Container Won't Start
+
+```bash
+# Check container logs
+kamal app logs
+
+# Check container details
+kamal app details
+
+# Verify health check configuration
+kamal app exec "curl localhost:3000/up"
+```
+
+### Deployment Hangs
+
+```bash
+# Check for stuck locks
+kamal lock status
+
+# Check proxy status
+kamal proxy status
+
+# View all container details
+kamal details
+```

@@ -1,0 +1,536 @@
+---
+title: Creating Custom Commands
+description: Define reusable command aliases for common deployment tasks
+---
+
+Kamal allows you to create custom command aliases that simplify common tasks and workflows. Aliases are shortcuts that execute Kamal commands with predefined arguments.
+
+## What Are Aliases?
+
+Aliases are custom commands defined in your `config/deploy.yml` that execute Kamal commands with specific arguments. They help:
+
+- Simplify complex commands
+- Standardize team workflows
+- Reduce typing for frequent operations
+- Create custom deployment procedures
+
+## Basic Alias Configuration
+
+### Simple Command Alias
+
+Define aliases in your `deploy.yml`:
+
+```yaml
+aliases:
+  shell: app exec --interactive --reuse "bash"
+```
+
+Use it:
+
+```bash
+kamal shell
+# Equivalent to: kamal app exec --interactive --reuse "bash"
+```
+
+### Multiple Aliases
+
+```yaml
+aliases:
+  shell: app exec --interactive --reuse "bash"
+  console: app exec --interactive --reuse "bin/rails console"
+  logs: app logs --follow
+  restart: app restart
+```
+
+Now you have convenient shortcuts:
+
+```bash
+kamal console  # Opens Rails console
+kamal logs     # Follows application logs
+kamal restart  # Restarts the application
+```
+
+## Alias Implementation
+
+From `lib/kamal/cli/alias/command.rb:2-8`, aliases are resolved and executed:
+
+```ruby
+def run(instance, args = [])
+  if (command = KAMAL.resolve_alias(name))
+    KAMAL.reset
+    Kamal::Cli::Main.start(Shellwords.split(command) + ARGV[1..-1])
+  else
+    super
+  end
+end
+```
+
+This means aliases:
+- Are expanded to full Kamal commands
+- Accept additional arguments
+- Are resolved at runtime
+
+## Overriding Alias Arguments
+
+You can override or extend alias arguments:
+
+```yaml
+aliases:
+  logs: app logs --follow
+```
+
+Use with additional arguments:
+
+```bash
+# Use different role
+kamal logs --roles worker
+
+# Different host
+kamal logs --hosts 192.168.0.1
+
+# Add grep
+kamal logs --grep "ERROR"
+```
+
+From the implementation, `ARGV[1..-1]` passes additional arguments to the aliased command.
+
+## Common Alias Patterns
+
+### Development Aliases
+
+```yaml
+aliases:
+  # Interactive shells
+  shell: app exec --interactive --reuse "bash"
+  sh: app exec --interactive --reuse "sh"
+  
+  # Rails specific
+  console: app exec --interactive --reuse "bin/rails console"
+  dbconsole: app exec --interactive --reuse "bin/rails dbconsole"
+  
+  # View logs
+  logs: app logs --follow
+  errors: app logs --grep "ERROR" --lines 100
+```
+
+### Operational Aliases
+
+```yaml
+aliases:
+  # Quick checks
+  ps: app containers
+  status: app details
+  
+  # Management
+  restart: app restart
+  stop: app stop
+  start: app start
+  
+  # Cleanup
+  clean: prune all
+```
+
+### Deployment Aliases
+
+```yaml
+aliases:
+  # Deploy stages
+  deploy-web: deploy --roles web
+  deploy-workers: deploy --roles worker
+  deploy-staging: deploy --destination staging
+  
+  # Rollback
+  rollback: app rollback
+  rollback-web: app rollback --roles web
+```
+
+### Database Aliases
+
+```yaml
+aliases:
+  # Database operations
+  db-migrate: app exec "bin/rails db:migrate"
+  db-console: accessory exec db --interactive "mysql -u root -p"
+  db-backup: accessory exec db "mysqldump -u root -p myapp_production > /backups/backup.sql"
+  
+  # Redis operations
+  redis-cli: accessory exec redis --interactive "redis-cli"
+  redis-flush: accessory exec redis "redis-cli FLUSHALL"
+```
+
+### Monitoring Aliases
+
+```yaml
+aliases:
+  # Logs with context
+  web-logs: app logs --roles web --follow
+  worker-logs: app logs --roles worker --follow
+  db-logs: accessory logs db --follow
+  
+  # System monitoring
+  top: app exec --reuse "top"
+  mem: app exec --reuse "free -h"
+  disk: app exec --reuse "df -h"
+```
+
+## Role-Specific Aliases
+
+### Targeting Different Roles
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+  worker:
+    hosts:
+      - 192.168.0.2
+    cmd: bin/jobs
+
+aliases:
+  # Web server operations
+  web-shell: app exec --roles web --interactive --reuse "bash"
+  web-console: app exec --roles web --interactive --reuse "bin/rails console"
+  web-restart: app restart --roles web
+  
+  # Worker operations
+  worker-shell: app exec --roles worker --interactive --reuse "bash"
+  worker-restart: app restart --roles worker
+  worker-logs: app logs --roles worker --follow
+```
+
+Usage:
+
+```bash
+kamal web-console    # Opens console on web server
+kamal worker-logs    # Views worker logs
+```
+
+## Host-Specific Aliases
+
+```yaml
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+    - 192.168.0.3
+
+aliases:
+  # Target specific hosts
+  primary-shell: app exec --hosts 192.168.0.1 --interactive --reuse "bash"
+  secondary-logs: app logs --hosts 192.168.0.2 --follow
+```
+
+## Multi-Command Aliases
+
+### Sequential Operations
+
+While aliases execute single commands, you can create scripts for complex workflows:
+
+```yaml
+aliases:
+  full-deploy: deploy
+```
+
+For multi-step operations, use shell scripts:
+
+```bash
+#!/bin/bash
+# scripts/deploy-with-maintenance.sh
+kamal app stop
+kamal build deliver
+kamal deploy
+kamal app start
+```
+
+## Environment-Specific Aliases
+
+### Multiple Environments
+
+```yaml
+# config/deploy.yml (production)
+aliases:
+  deploy: deploy
+  console: app exec --interactive --reuse "bin/rails console -e production"
+
+# config/deploy.staging.yml
+aliases:
+  deploy: deploy --destination staging
+  console: app exec --interactive --reuse "bin/rails console -e staging"
+```
+
+Use with destinations:
+
+```bash
+kamal console -d staging
+kamal console -d production
+```
+
+## Advanced Patterns
+
+### Debugging Aliases
+
+```yaml
+aliases:
+  # Debug specific issues
+  debug-memory: app exec --reuse "ps aux --sort=-%mem | head -10"
+  debug-connections: app exec --reuse "netstat -an | grep ESTABLISHED | wc -l"
+  debug-env: app exec --reuse "env | sort"
+  
+  # Check container health
+  healthcheck: app exec --reuse "curl -f http://localhost/health || exit 1"
+```
+
+### Maintenance Aliases
+
+```yaml
+aliases:
+  # Maintenance tasks
+  clear-cache: app exec "bin/rails cache:clear"
+  clear-logs: app exec "bin/rails log:clear"
+  cleanup-tmp: app exec "rm -rf /app/tmp/*"
+  
+  # Asset management
+  precompile: app exec "bin/rails assets:precompile"
+  clean-assets: app exec "bin/rails assets:clean"
+```
+
+### Testing Aliases
+
+```yaml
+aliases:
+  # Run tests in container
+  test: app exec "bin/rails test"
+  test-system: app exec "bin/rails test:system"
+  
+  # Linting
+  lint: app exec "bundle exec rubocop"
+  lint-fix: app exec "bundle exec rubocop -a"
+```
+
+## Best Practices
+
+### Naming Conventions
+
+<Accordion title="Use descriptive names">
+```yaml
+aliases:
+  # Good
+  web-console: app exec --roles web --interactive --reuse "bin/rails console"
+  worker-restart: app restart --roles worker
+  db-migrate: app exec "bin/rails db:migrate"
+  
+  # Avoid
+  c: app exec --interactive --reuse "bin/rails console"  # Too short
+  command1: app restart  # Not descriptive
+```
+</Accordion>
+
+<Accordion title="Group related aliases">
+```yaml
+aliases:
+  # Web operations
+  web-shell: app exec --roles web --interactive --reuse "bash"
+  web-logs: app logs --roles web --follow
+  web-restart: app restart --roles web
+  
+  # Database operations
+  db-console: accessory exec db --interactive "mysql -u root -p"
+  db-backup: accessory exec db "mysqldump ..."
+  db-restore: accessory exec db "mysql ... < backup.sql"
+```
+</Accordion>
+
+<Accordion title="Document complex aliases">
+Add comments in your deploy.yml:
+
+```yaml
+aliases:
+  # Open interactive Rails console on web servers
+  console: app exec --interactive --reuse "bin/rails console"
+  
+  # Deploy only to web role, useful for frontend-only changes
+  deploy-web: deploy --roles web
+  
+  # Backup database with timestamp in filename
+  db-backup: accessory exec db "mysqldump -u root myapp > /backups/backup-$(date +%Y%m%d).sql"
+```
+</Accordion>
+
+## Security Considerations
+
+<Warning>
+Be careful with aliases that include sensitive commands or data. Never hardcode passwords in aliases.
+</Warning>
+
+### Safe Practices
+
+```yaml
+aliases:
+  # Good - uses environment variable
+  db-console: accessory exec db --interactive "mysql -u root -p\${MYSQL_ROOT_PASSWORD}"
+  
+  # Bad - hardcoded password
+  # db-console: accessory exec db "mysql -u root -pMyPassword123"
+```
+
+### Restricted Operations
+
+```yaml
+aliases:
+  # Safe - requires confirmation
+  prune-all: prune all
+  
+  # Dangerous - add confirmation flags
+  # remove-all: accessory remove all --confirmed
+```
+
+## Troubleshooting
+
+<Accordion title="Alias not found">
+Check alias definition:
+```bash
+# View current configuration
+kamal config
+```
+
+Ensure alias is defined in the correct deploy.yml file.
+</Accordion>
+
+<Accordion title="Arguments not working">
+Quote arguments properly:
+
+```yaml
+# Good
+aliases:
+  search-logs: app logs --grep "ERROR"
+
+# May have issues
+# search-logs: app logs --grep ERROR
+```
+</Accordion>
+
+<Accordion title="Interactive commands fail">
+Ensure you use `--interactive` flag:
+
+```yaml
+aliases:
+  # Correct for interactive shells
+  shell: app exec --interactive --reuse "bash"
+  
+  # Won't work without --interactive
+  # shell: app exec "bash"
+```
+</Accordion>
+
+## Example Configurations
+
+<CodeGroup>
+
+```yaml Rails Application
+service: my-rails-app
+image: user/my-rails-app
+
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+      - 192.168.0.2
+  worker:
+    hosts:
+      - 192.168.0.3
+    cmd: bundle exec sidekiq
+
+aliases:
+  # Development
+  console: app exec --interactive --reuse "bin/rails console"
+  shell: app exec --interactive --reuse "bash"
+  
+  # Logs
+  logs: app logs --follow
+  web-logs: app logs --roles web --follow
+  worker-logs: app logs --roles worker --follow
+  
+  # Database
+  db-migrate: app exec "bin/rails db:migrate"
+  db-console: accessory exec db --interactive "mysql -u root -p"
+  
+  # Deployment
+  deploy-web: deploy --roles web
+  deploy-workers: deploy --roles worker
+  
+  # Maintenance
+  clear-cache: app exec "bin/rails cache:clear"
+  restart-workers: app restart --roles worker
+```
+
+```yaml Node.js Application
+service: my-node-app
+image: user/my-node-app
+
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+
+aliases:
+  # Development
+  shell: app exec --interactive --reuse "sh"
+  node: app exec --interactive --reuse "node"
+  
+  # Logs
+  logs: app logs --follow --lines 100
+  errors: app logs --grep "Error" --follow
+  
+  # Management
+  restart: app restart
+  ps: app containers
+  status: app details
+  
+  # Deployment
+  deploy-quick: deploy --skip-push
+  rollback: app rollback
+```
+
+```yaml Python Application
+service: my-python-app
+image: user/my-python-app
+
+servers:
+  web:
+    - 192.168.0.1
+  worker:
+    hosts:
+      - 192.168.0.2
+    cmd: celery -A app worker
+
+aliases:
+  # Development
+  shell: app exec --interactive --reuse "bash"
+  python: app exec --interactive --reuse "python"
+  
+  # Django specific
+  manage: app exec --interactive --reuse "python manage.py"
+  migrate: app exec "python manage.py migrate"
+  
+  # Logs
+  logs: app logs --follow
+  worker-logs: app logs --roles worker --follow
+  
+  # Celery management
+  celery-status: app exec --roles worker "celery -A app status"
+  celery-inspect: app exec --roles worker "celery -A app inspect active"
+```
+
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Secrets Management" icon="key" href="/guides/secrets-management">
+    Secure sensitive configuration
+  </Card>
+  <Card title="Docker Images" icon="docker" href="/guides/docker-images">
+    Build and manage images
+  </Card>
+</CardGroup>

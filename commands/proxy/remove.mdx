@@ -1,0 +1,218 @@
+---
+title: kamal proxy remove
+description: Remove the kamal-proxy container and image from your servers
+---
+
+The `kamal proxy remove` command completely removes the kamal-proxy container, image, and configuration from your servers. This is a destructive operation used when decommissioning servers or switching to a different proxy solution.
+
+## Usage
+
+```bash
+kamal proxy remove [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--force" type="boolean" default="false">
+  Force removal even when other Kamal applications are still installed on the server.
+</ParamField>
+
+## What It Does
+
+The remove command performs the following operations:
+
+1. **Stops Container** - Stops the running kamal-proxy container
+2. **Removes Container** - Removes the stopped container
+3. **Removes Image** - Removes the kamal-proxy Docker image
+4. **Removes Directory** - Removes the proxy configuration directory
+
+<Warning>
+This is a destructive operation that will make all applications using the proxy inaccessible. Only use this command when you're sure you want to completely remove kamal-proxy.
+</Warning>
+
+## Safety Check
+
+By default, the remove command checks if other Kamal applications are installed on the server:
+
+```bash
+$ kamal proxy remove
+Not removing the proxy, as other apps are installed, 
+ignore this check with kamal proxy remove --force
+```
+
+This prevents you from accidentally breaking other applications that rely on the proxy.
+
+## Force Removal
+
+To bypass the safety check and remove the proxy anyway:
+
+```bash
+kamal proxy remove --force
+```
+
+<Warning>
+Using `--force` will remove the proxy even if other applications depend on it. This will cause those applications to become inaccessible.
+</Warning>
+
+## When to Use
+
+**Use `kamal proxy remove` when:**
+- Decommissioning servers completely
+- Switching to a different reverse proxy solution
+- Cleaning up after testing Kamal
+- Removing Kamal entirely from your servers
+
+**Don't use `kamal proxy remove` when:**
+- You just want to restart the proxy (use `kamal proxy restart`)
+- You want to upgrade the proxy (use `kamal proxy reboot`)
+- Other applications are still using the proxy (unless using `--force`)
+- You're troubleshooting - try `kamal proxy reboot` first
+
+## What Gets Removed
+
+### Container
+
+The kamal-proxy Docker container is stopped and removed:
+
+```bash
+docker stop kamal-proxy
+docker rm kamal-proxy
+```
+
+### Image
+
+The kamal-proxy Docker image is removed from the server:
+
+```bash
+docker rmi basecamp/kamal-proxy
+```
+
+This frees up disk space but means the image will need to be pulled again if you boot the proxy later.
+
+### Configuration Directory
+
+The proxy configuration directory (typically `/opt/kamal-proxy/`) is removed:
+
+```bash
+rm -rf /opt/kamal-proxy/
+```
+
+This includes:
+- App configuration files
+- SSL certificates (if using custom certificates)
+- Any proxy-specific settings
+
+<Note>
+The Docker network (`kamal`) is NOT removed by this command. It's shared by all Kamal applications and removing it could affect other apps.
+</Note>
+
+## Example Output
+
+```bash
+$ kamal proxy remove --force
+Forcing, so removing the proxy, even though other apps are installed
+  INFO [abc123] Running docker stop kamal-proxy on 192.168.1.10
+  INFO [abc123] Finished in 2.345s
+  INFO [def456] Running docker rm kamal-proxy on 192.168.1.10
+  INFO [def456] Finished in 0.456s
+  INFO [ghi789] Running docker rmi basecamp/kamal-proxy on 192.168.1.10
+  INFO [ghi789] Finished in 1.234s
+  INFO [jkl012] Running rm -rf /opt/kamal-proxy on 192.168.1.10
+  INFO [jkl012] Finished in 0.123s
+```
+
+## Recovering After Removal
+
+If you need to restore the proxy after removal:
+
+```bash
+kamal proxy boot
+```
+
+This will:
+- Pull the kamal-proxy image
+- Create a new container
+- Set up the configuration directory
+
+However, you'll need to redeploy your applications to register them with the new proxy:
+
+```bash
+kamal deploy
+```
+
+## Multiple Proxy Hosts
+
+If you have multiple servers running the proxy, the remove command operates on all proxy hosts in parallel:
+
+```yaml
+servers:
+  web:
+    hosts:
+      - 192.168.1.10
+      - 192.168.1.11
+    proxy: true
+```
+
+```bash
+kamal proxy remove
+# Removes proxy from both hosts
+```
+
+## Locking
+
+The remove command uses Kamal's distributed lock to prevent concurrent operations. If another Kamal command is running, you'll need to wait for it to complete.
+
+## Auditing
+
+Proxy removal operations are recorded in Kamal's audit log:
+
+```bash
+kamal audit
+# Shows: "Removed proxy container" and "Removed proxy image" entries
+```
+
+## Partial Removal
+
+For more granular control, you can use hidden subcommands:
+
+```bash
+# Remove only the container (keeps image)
+kamal proxy remove_container
+
+# Remove only the image (keeps container)
+kamal proxy remove_image
+
+# Remove only the config directory
+kamal proxy remove_proxy_directory
+```
+
+<Note>
+These commands are not officially documented and may change in future versions. Use with caution.
+</Note>
+
+## Alternative: Stopping the Proxy
+
+If you want to temporarily disable the proxy without removing it:
+
+```bash
+kamal proxy stop
+```
+
+This stops the container but keeps everything in place for easy restart:
+
+```bash
+kamal proxy start
+```
+
+## Related Commands
+
+- [`kamal proxy boot`](/commands/proxy/boot) - Start the proxy after removal
+- [`kamal proxy reboot`](/commands/proxy/reboot) - Restart with new image
+- [`kamal proxy details`](/commands/proxy/details) - View proxy information
+- [`kamal proxy stop`](/commands/proxy/stop) - Stop without removing
+
+## See Also
+
+- [Proxy Configuration](/configuration/proxy)
+- [kamal-proxy Documentation](https://github.com/basecamp/kamal-proxy)
+- [Server Configuration](/configuration/servers)

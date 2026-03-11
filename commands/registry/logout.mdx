@@ -1,0 +1,318 @@
+---
+title: kamal registry logout
+description: Log out of Docker registry locally and remotely
+---
+
+The `kamal registry logout` command removes Docker registry authentication credentials from your local machine and remote servers.
+
+## Overview
+
+Logout is useful for security purposes or when switching between different registries or accounts.
+
+<Note>
+  This command only works with remote registries. For local registries, use `kamal registry remove` instead.
+</Note>
+
+## Usage
+
+```bash
+kamal registry logout
+```
+
+### Options
+
+<ParamField path="--skip-local" type="boolean" default={false}>
+  Skip logout on the local machine. Alias: `-L`
+  
+  ```bash
+  kamal registry logout --skip-local
+  ```
+</ParamField>
+
+<ParamField path="--skip-remote" type="boolean" default={false}>
+  Skip logout on remote servers. Alias: `-R`
+  
+  ```bash
+  kamal registry logout --skip-remote
+  ```
+</ParamField>
+
+## How It Works
+
+The logout command removes authentication credentials from two locations:
+
+<Steps>
+  <Step title="Local Logout">
+    Removes Docker registry credentials from your local machine.
+    
+    ```ruby
+    # From registry.rb:23
+    run_locally { execute *KAMAL.registry.logout } unless options[:skip_local]
+    ```
+    
+    This removes credentials from:
+    - `~/.docker/config.json` (on your local machine)
+  </Step>
+  
+  <Step title="Remote Logout">
+    Removes Docker registry credentials from all configured servers.
+    
+    ```ruby
+    # From registry.rb:24
+    on(KAMAL.hosts) { execute *KAMAL.registry.logout } unless options[:skip_remote]
+    ```
+    
+    This removes credentials from:
+    - `~/.docker/config.json` (on each server)
+  </Step>
+</Steps>
+
+## Example Output
+
+```bash
+$ kamal registry logout
+
+INFO Running docker logout on local machine
+Removing login credentials for docker.io
+
+INFO [192.168.1.10] Running docker logout on 192.168.1.10
+INFO [192.168.1.11] Running docker logout on 192.168.1.11
+Removed credentials from all servers
+```
+
+## When to Use Logout
+
+### Security Purposes
+
+Remove credentials when:
+- Rotating access tokens or passwords
+- Decommissioning servers
+- Shared development machines
+- After troubleshooting registry issues
+
+```bash
+# Remove old credentials
+kamal registry logout
+
+# Update credentials in .kamal/secrets
+vim .kamal/secrets
+
+# Login with new credentials
+kamal registry login
+```
+
+### Switching Registries
+
+When changing registry configuration:
+
+```bash
+# Logout from current registry
+kamal registry logout
+
+# Update registry configuration
+vim config/deploy.yml
+
+# Login to new registry
+kamal registry login
+```
+
+## Skipping Logout Steps
+
+### Skip Local Logout
+
+Remove credentials only from servers:
+
+```bash
+kamal registry logout --skip-local
+```
+
+Useful when:
+- Keeping local development environment authenticated
+- Only cleaning up server credentials
+
+### Skip Remote Logout
+
+Remove credentials only from local machine:
+
+```bash
+kamal registry logout --skip-remote
+```
+
+Useful when:
+- Cleaning local environment without affecting deployments
+- Servers need to remain authenticated for running containers
+
+## Local Registry Exception
+
+If you're using a local registry (configured with `local: true`), this command will fail:
+
+```ruby
+# From registry.rb:42-44
+if KAMAL.registry.local?
+  raise "Cannot use logout command with a local registry. Use `kamal registry remove` instead."
+end
+```
+
+For local registries, use:
+
+```bash
+kamal registry remove
+```
+
+This will stop and remove the local registry container.
+
+## Integration with Remove
+
+Logout is automatically performed during `kamal remove`:
+
+```ruby
+# From main.rb:189
+invoke "kamal:cli:registry:remove", [], options.without(:confirmed).merge(skip_local: true)
+```
+
+When removing an entire deployment, Kamal logs out from the registry on servers (but keeps local credentials intact).
+
+## Impact on Running Containers
+
+<Warning>
+  **Important**: Logging out does NOT affect running containers.
+</Warning>
+
+Containers that are already running will continue to run. Logout only affects:
+- Future image pulls
+- New container starts from private images
+
+To ensure continued operation:
+
+```bash
+# Images are already pulled, so logout won't affect running containers
+kamal registry logout
+
+# Running containers continue to work
+kamal app details
+```
+
+## Credential Storage Locations
+
+Docker credentials are stored in:
+
+```bash
+# Local machine
+~/.docker/config.json
+
+# Remote servers (as SSH user)
+~/.docker/config.json
+```
+
+The logout command removes the `auths` section for your registry:
+
+```json Before Logout
+{
+  "auths": {
+    "https://index.docker.io/v1/": {
+      "auth": "dXNlcm5hbWU6cGFzc3dvcmQ="
+    }
+  }
+}
+```
+
+```json After Logout
+{
+  "auths": {}
+}
+```
+
+## Re-authenticating After Logout
+
+To re-authenticate after logout:
+
+```bash
+# Login again
+kamal registry login
+```
+
+Or during deployment (login happens automatically):
+
+```bash
+kamal deploy
+```
+
+## Troubleshooting
+
+### Credentials Still Present
+
+If logout doesn't remove credentials:
+
+```bash
+# Manually check Docker config
+cat ~/.docker/config.json
+
+# Force logout
+docker logout
+
+# On remote servers
+ssh user@server "docker logout"
+```
+
+### Permission Denied
+
+If logout fails with permission errors:
+
+```bash
+# Check file permissions
+ls -la ~/.docker/config.json
+
+# Fix permissions if needed
+chmod 600 ~/.docker/config.json
+```
+
+### Multiple Registry Entries
+
+If using multiple registries:
+
+```bash
+# Logout logs out from the configured registry only
+kamal registry logout
+
+# To logout from all registries
+docker logout registry1.example.com
+docker logout registry2.example.com
+```
+
+## Security Considerations
+
+<Steps>
+  <Step title="Clean Up After Troubleshooting">
+    Always logout after debugging registry issues on shared machines:
+    ```bash
+    kamal registry logout
+    ```
+  </Step>
+  
+  <Step title="Rotate Credentials">
+    Logout before updating credentials:
+    ```bash
+    kamal registry logout
+    # Update .kamal/secrets
+    kamal registry login
+    ```
+  </Step>
+  
+  <Step title="Decommission Servers">
+    Remove credentials when retiring servers:
+    ```bash
+    # SSH into server
+    ssh user@old-server "docker logout"
+    ```
+  </Step>
+</Steps>
+
+## Related Commands
+
+- [`kamal registry login`](/commands/registry/login) - Log in to registry
+- [`kamal registry remove`](/commands/registry/remove) - Remove registry and logout
+- [`kamal remove`](/commands/remove) - Remove entire deployment (includes logout)
+
+## Source Reference
+
+Implementation: `lib/kamal/cli/registry.rb:39-48`

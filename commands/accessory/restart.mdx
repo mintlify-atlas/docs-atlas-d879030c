@@ -1,0 +1,375 @@
+---
+title: kamal accessory restart
+description: Restart an existing accessory container
+---
+
+The `kamal accessory restart` command stops and then starts an existing accessory container. This is a convenience command that combines [`stop`](/commands/accessory/stop) and [`start`](/commands/accessory/start) operations.
+
+## Basic Usage
+
+```bash
+kamal accessory restart <NAME>
+```
+
+### Restart a Database
+
+```bash
+kamal accessory restart mysql
+```
+
+### Restart a Cache
+
+```bash
+kamal accessory restart redis
+```
+
+<Note>
+Restart uses the existing container. It does not pull a new image or recreate the container.
+</Note>
+
+## What Restart Does
+
+The restart command executes:
+
+<Steps>
+  <Step title="Stop Container">
+    Gracefully stops the running container.
+  </Step>
+  
+  <Step title="Start Container">
+    Starts the same container again.
+  </Step>
+</Steps>
+
+This is equivalent to:
+
+```bash
+kamal accessory stop mysql
+kamal accessory start mysql
+```
+
+## Restart vs. Reboot
+
+| Command | Container | Image | Configuration | Use Case |
+|---------|-----------|-------|---------------|----------|
+| `restart` | Same container | No update | No update | Quick restart |
+| `reboot` | Recreates container | Pulls latest | Applies changes | Update or config change |
+
+<Info>
+Use `restart` for quick recovery. Use [`reboot`](/commands/accessory/reboot) when you need to apply configuration changes or update the image.
+</Info>
+
+## When to Use Restart
+
+### Fix Temporary Issues
+
+Restart can resolve transient problems:
+
+```bash
+kamal accessory restart redis
+# Often fixes connection issues or memory leaks
+```
+
+### Apply Runtime Configuration
+
+Some accessories support runtime configuration updates:
+
+```bash
+# After updating Redis config via redis-cli
+kamal accessory restart redis
+# Applies configuration loaded from persistence
+```
+
+### Clear In-Memory State
+
+Restart an in-memory cache:
+
+```bash
+kamal accessory restart memcached
+# Clears all cached data
+```
+
+<Warning>
+Restarting clears any in-memory data not persisted to volumes.
+</Warning>
+
+### Free Accumulated Resources
+
+Restart accessories that accumulate memory or connections:
+
+```bash
+kamal accessory restart redis
+# Releases accumulated memory
+```
+
+## Examples
+
+### Restart After Log Rotation
+
+<Tabs>
+  <Tab title="Scenario">
+    After rotating logs on the host:
+    
+    ```bash
+    # Rotate logs
+    ssh user@host "logrotate /etc/logrotate.d/mysql"
+    
+    # Restart to reopen log files
+    kamal accessory restart mysql
+    ```
+  </Tab>
+  
+  <Tab title="Output">
+    ```text
+    INFO [abc123] Stopping mysql accessory on 192.168.0.10...
+    INFO [abc123] Starting mysql accessory on 192.168.0.10...
+    INFO Restarted mysql accessory
+    ```
+  </Tab>
+</Tabs>
+
+### Restart Multiple Accessories
+
+Restart several accessories:
+
+```bash
+kamal accessory restart redis
+kamal accessory restart memcached
+kamal accessory restart mysql
+```
+
+<Note>
+There's no `restart all` option. Restart each accessory individually.
+</Note>
+
+### Restart with Proxy
+
+<CodeGroup>
+```yaml Configuration
+accessories:
+  adminer:
+    image: adminer:latest
+    host: 192.168.0.10
+    
+    proxy:
+      host: db-admin.example.com
+      ssl: true
+      app_port: 8080
+```
+
+```bash Restart Command
+kamal accessory restart adminer
+```
+</CodeGroup>
+
+The restart command:
+1. Removes the accessory from kamal-proxy
+2. Stops the container
+3. Starts the container
+4. Re-registers with kamal-proxy
+
+## Data Persistence
+
+### Volumes Persist Across Restarts
+
+Data in mounted volumes is preserved:
+
+```yaml deploy.yml
+accessories:
+  postgres:
+    image: postgres:15
+    host: 192.168.0.10
+    directories:
+      - postgres-data:/var/lib/postgresql/data
+```
+
+```bash
+kamal accessory restart postgres
+# Database data in postgres-data is preserved
+```
+
+### In-Memory Data is Lost
+
+<Warning>
+Any data stored in container memory or non-mounted paths is lost during restart.
+</Warning>
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    host: 192.168.0.11
+    # No persistence configured
+```
+
+```bash
+kamal accessory restart redis
+# All cached data is lost
+```
+
+To preserve Redis data:
+
+```yaml deploy.yml
+accessories:
+  redis:
+    image: redis:7
+    host: 192.168.0.11
+    directories:
+      - redis-data:/data
+    cmd: redis-server --appendonly yes
+```
+
+## Restart Timing
+
+The restart is sequential (stop, then start):
+
+```bash
+kamal accessory restart mysql
+# 1. Stop (may take several seconds)
+# 2. Start (boot time varies)
+# Total downtime = stop time + start time
+```
+
+<Info>
+For zero-downtime updates, use [`kamal accessory reboot`](/commands/accessory/reboot) with multiple hosts and a load balancer.
+</Info>
+
+## Implementation Details
+
+From `accessory.rb:125-131`:
+
+```ruby
+def restart(name)
+  with_lock do
+    stop(name)
+    start(name)
+  end
+end
+```
+
+The restart command is simply a wrapper around stop and start operations.
+
+## Troubleshooting
+
+### Container Won't Start After Restart
+
+```bash
+# Check logs for startup errors
+kamal accessory logs mysql --lines 50
+
+# Check container details
+kamal accessory details mysql
+
+# Try manual stop/start
+kamal accessory stop mysql
+kamal accessory start mysql
+```
+
+### Restart Takes Too Long
+
+```bash
+# Check stop timeout in configuration
+cat deploy.yml | grep -A 10 "mysql:"
+
+# Increase if needed
+```
+
+```yaml deploy.yml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    options:
+      stop-timeout: 60  # Increase timeout
+```
+
+### Data Loss After Restart
+
+If unexpected data loss occurs:
+
+```bash
+# Verify volume configuration
+kamal accessory details mysql
+
+# Check if volumes are mounted
+ssh user@host "docker inspect myapp-mysql | grep -A 5 Mounts"
+```
+
+**Solution**: Ensure proper volume configuration:
+
+```yaml deploy.yml
+accessories:
+  mysql:
+    image: mysql:8.0
+    host: 192.168.0.10
+    directories:
+      - mysql-data:/var/lib/mysql  # Critical for data persistence
+```
+
+### Proxy Not Reconnecting
+
+```bash
+# Check proxy status
+kamal proxy details
+
+# Manually reconfigure if needed
+kamal proxy reboot
+kamal accessory restart adminer
+```
+
+## Use Cases
+
+### Scheduled Restarts
+
+Restart accessories periodically:
+
+```bash
+#!/bin/bash
+# weekly-restart.sh
+
+echo "Restarting Redis..."
+kamal accessory restart redis
+
+echo "Restarting Memcached..."
+kamal accessory restart memcached
+```
+
+### After Configuration Reload
+
+Some accessories support config reload via signals:
+
+```bash
+# Update config file on host
+ssh user@host "vi /path/to/redis.conf"
+
+# Restart to apply
+kamal accessory restart redis
+```
+
+### Health Check Recovery
+
+Restart unhealthy accessories:
+
+```bash
+# Check health
+kamal accessory details redis
+
+# Restart if unhealthy
+kamal accessory restart redis
+
+# Verify recovery
+kamal accessory details redis
+```
+
+## Related Commands
+
+- [`kamal accessory start`](/commands/accessory/start) - Start stopped container
+- [`kamal accessory stop`](/commands/accessory/stop) - Stop running container
+- [`kamal accessory reboot`](/commands/accessory/reboot) - Recreate container with updates
+- [`kamal accessory details`](/commands/accessory/details) - Check container status
+- [`kamal accessory logs`](/commands/accessory/logs) - View logs for troubleshooting
+
+## See Also
+
+- [Accessory Configuration](/configuration/accessories) - Configure accessories
+- [Docker Options](/configuration/accessories#docker-options) - Configure restart behavior

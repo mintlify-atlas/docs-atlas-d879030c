@@ -1,0 +1,99 @@
+---
+title: kamal proxy boot
+description: Boot the kamal-proxy container on your servers
+---
+
+The `kamal proxy boot` command starts the kamal-proxy container on your servers. This is typically run during initial setup or when the proxy needs to be started from scratch.
+
+## Usage
+
+```bash
+kamal proxy boot
+```
+
+## What It Does
+
+The boot command performs the following operations:
+
+1. **Creates Docker Network** - Creates the kamal network if it doesn't already exist
+2. **Logs into Registry** - Authenticates with the Docker registry to pull the proxy image
+3. **Version Check** - Checks the current proxy version and ensures it meets minimum requirements
+4. **Creates Config Directory** - Creates the apps config directory for proxy configuration
+5. **Starts Container** - Starts the kamal-proxy container (or creates it if it doesn't exist)
+
+<Note>
+The boot command is idempotent - it will start an existing stopped container or create a new one if none exists.
+</Note>
+
+## Version Requirements
+
+If an older version of kamal-proxy is detected, you'll see an error:
+
+```
+kamal-proxy version X.X.X is too old, run `kamal proxy reboot` 
+in order to update to at least Y.Y.Y
+```
+
+In this case, use `kamal proxy reboot` instead to upgrade the proxy.
+
+<Warning>
+If the kamal network already exists on your servers, the command will continue without error. This is expected behavior when running boot on servers where Kamal has been used before.
+</Warning>
+
+## When to Use
+
+**Use `kamal proxy boot` when:**
+- Setting up Kamal on new servers for the first time
+- The proxy container has been removed and needs to be recreated
+- Restarting a stopped proxy container
+
+**Don't use `kamal proxy boot` when:**
+- Upgrading the proxy to a new version (use `kamal proxy reboot` instead)
+- The proxy is already running (use `kamal proxy restart` to restart)
+
+## Configuration
+
+The proxy container configuration is defined in your `deploy.yml`:
+
+```yaml
+proxy:
+  run:
+    http_port: 80
+    https_port: 443
+    metrics_port: 9090
+    debug: false
+    log_max_size: "10m"
+```
+
+See [Proxy Configuration](/configuration/proxy) for all available options.
+
+## Example Output
+
+```bash
+$ kamal proxy boot
+  INFO [abc123] Running docker network create kamal on 192.168.1.10
+  INFO [abc123] Finished in 0.234s
+  INFO [def456] Running docker login... on 192.168.1.10
+  INFO [def456] Finished in 1.123s
+  INFO [ghi789] Running docker ps --filter name=kamal-proxy on 192.168.1.10
+  INFO [ghi789] Finished in 0.456s
+  INFO [jkl012] Running docker start kamal-proxy on 192.168.1.10
+  INFO [jkl012] Finished in 2.345s
+```
+
+## Locking
+
+The boot command uses Kamal's distributed lock mechanism to prevent concurrent operations on the same servers. If another Kamal command is running, you'll need to wait for it to complete.
+
+## Related Commands
+
+- [`kamal proxy reboot`](/commands/proxy/reboot) - Update and restart the proxy
+- [`kamal proxy details`](/commands/proxy/details) - View proxy container information
+- [`kamal proxy remove`](/commands/proxy/remove) - Remove the proxy container
+- [`kamal setup`](/deployment/setup) - Complete setup including proxy boot
+
+## See Also
+
+- [Proxy Configuration](/configuration/proxy)
+- [kamal-proxy Documentation](https://github.com/basecamp/kamal-proxy)
+- [Zero Downtime Deployments](/deployment/zero-downtime)
