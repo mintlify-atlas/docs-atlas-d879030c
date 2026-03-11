@@ -1,0 +1,199 @@
+---
+title: kamal app version
+description: Show the currently running application version on servers
+---
+
+The `kamal app version` command displays the version tag of the application container currently running on your servers.
+
+## Usage
+
+```bash
+kamal app version
+```
+
+## Output
+
+Shows the version tag for each server/role combination:
+
+```bash Example output
+[server-1] my-app-web-v1.2.3
+[server-2] my-app-web-v1.2.3
+[worker-1] my-app-worker-v1.2.3
+```
+
+The version corresponds to:
+- Git commit SHA (default)
+- Custom version from `VERSION` environment variable
+- Version specified during deployment
+
+## Version Format
+
+Kamal versions typically follow these patterns:
+
+**Git-based versions** (default):
+```bash
+abc1234  # 7-character commit SHA
+```
+
+**Uncommitted changes**:
+```bash
+abc1234_uncommitted_a8f3d9e2  # SHA + random suffix
+```
+
+**Custom versions**:
+```bash
+v1.2.3   # Semantic version
+2024-01-15  # Date-based
+release-candidate-3  # Named release
+```
+
+## Common Options
+
+<ParamField path="--hosts" type="string">
+  Check version on specific hosts only
+  
+  ```bash
+  kamal app version --hosts server-1,server-2
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Check version for specific roles only
+  
+  ```bash
+  kamal app version --roles web
+  ```
+</ParamField>
+
+<ParamField path="--primary" type="boolean" default="false">
+  Check version on primary server only
+  
+  ```bash
+  kamal app version --primary
+  ```
+</ParamField>
+
+## Use Cases
+
+<Accordion title="Verify deployment success">
+  After deploying, confirm the new version is running:
+  
+  ```bash
+  # Deploy version v1.2.3
+  VERSION=v1.2.3 kamal deploy
+  
+  # Verify it's running
+  kamal app version
+  # Should show: v1.2.3 on all servers
+  ```
+</Accordion>
+
+<Accordion title="Check for version drift">
+  Ensure all servers are running the same version:
+  
+  ```bash
+  kamal app version
+  ```
+  
+  If servers show different versions:
+  - A deployment may be in progress
+  - A previous deployment may have failed on some servers
+  - Manual intervention may have occurred
+</Accordion>
+
+<Accordion title="Find rollback target">
+  Determine what version to rollback to:
+  
+  ```bash
+  # Check current version
+  kamal app version
+  
+  # View available versions
+  kamal app containers
+  
+  # Rollback to previous version
+  kamal rollback <version>
+  ```
+</Accordion>
+
+<Accordion title="CI/CD integration">
+  Use in deployment scripts to verify success:
+  
+  ```bash
+  #!/bin/bash
+  VERSION="v1.2.3"
+  
+  # Deploy
+  kamal deploy VERSION=$VERSION
+  
+  # Verify
+  DEPLOYED=$(kamal app version | grep $VERSION | wc -l)
+  EXPECTED=$(kamal app containers | wc -l)
+  
+  if [ $DEPLOYED -eq $EXPECTED ]; then
+    echo "Deployment verified"
+  else
+    echo "Deployment verification failed"
+    exit 1
+  fi
+  ```
+</Accordion>
+
+## Version Sources
+
+Kamal determines the version from:
+
+1. **Command line**: `VERSION=v1.2.3 kamal deploy`
+2. **Environment variable**: `export VERSION=v1.2.3`
+3. **Git commit SHA**: Automatically determined from current commit
+
+<Info>
+  Git-based versioning is automatic. Kamal uses the current Git commit SHA as the version tag.
+</Info>
+
+## Troubleshooting
+
+<Accordion title="No version shown">
+  **Issue**: Command returns empty or shows no version
+  
+  **Solution**:
+  - Check if containers are running: `kamal app containers`
+  - Verify container names match expected pattern
+  - Check if deployment completed successfully
+</Accordion>
+
+<Accordion title="Different versions on different servers">
+  **Issue**: Servers show inconsistent versions
+  
+  **Solution**:
+  - Complete the deployment: `kamal deploy`
+  - Or rollback all servers: `kamal rollback <version>`
+  - Check for failed deployments: `kamal audit`
+</Accordion>
+
+<Accordion title="Uncommitted changes suffix">
+  **Issue**: Version shows `_uncommitted_` suffix
+  
+  **Solution**: This is normal when deploying with uncommitted changes. To avoid:
+  ```bash
+  # Commit changes first
+  git add .
+  git commit -m "Release v1.2.3"
+  
+  # Then deploy
+  kamal deploy
+  ```
+</Accordion>
+
+## Related Commands
+
+- [`kamal app containers`](/commands/app/containers) - List all app containers and versions
+- [`kamal app details`](/commands/app/details) - Show detailed container information
+- [`kamal rollback`](/commands/rollback) - Rollback to a specific version
+- [`kamal version`](/commands/version) - Show Kamal CLI version
+
+## See Also
+
+- [Git-based Versioning](/guides/docker-images#image-tagging)
+- [Rollback Guide](/deployment/rollback)
+- [Deployment Workflow](/deployment/deploy)

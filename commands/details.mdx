@@ -1,0 +1,144 @@
+---
+title: kamal details
+description: Show details about all containers across your deployment
+---
+
+The `kamal details` command provides a comprehensive view of all containers in your deployment, including the application, proxy, and accessories.
+
+## Usage
+
+```bash
+kamal details
+```
+
+This command shows information about:
+- kamal-proxy container
+- Application containers across all roles and servers
+- All accessory containers (databases, Redis, etc.)
+
+## Output
+
+The command displays detailed information for each container:
+
+```bash Example output
+# Proxy on server-1
+kamal-proxy running (healthy)
+  Image: basecamp/kamal-proxy:latest
+  Ports: 80->80, 443->443
+  Status: Up 2 days
+
+# App containers
+web on server-1
+  my-app-web-abc123 running
+  Image: registry.example.com/my-app:v1.2.3
+  Status: Up 1 hour
+  Health: healthy
+
+# Accessories
+mysql on db-server
+  my-app-mysql running
+  Image: mysql:8.0
+  Ports: 3306->3306
+  Status: Up 5 days
+```
+
+## What It Shows
+
+For each container, you'll see:
+
+- **Container name** - Unique identifier
+- **Status** - Running, stopped, or health status
+- **Image** - Docker image being used
+- **Ports** - Port mappings (if any)
+- **Uptime** - How long the container has been running
+
+## Common Options
+
+<ParamField path="--hosts" type="string">
+  Show details for specific hosts only
+  
+  ```bash
+  kamal details --hosts server-1,server-2
+  ```
+</ParamField>
+
+<ParamField path="--roles" type="string">
+  Show details for specific roles only
+  
+  ```bash
+  kamal details --roles web,worker
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress host prefix in output
+  
+  **Alias:** `-q`
+  
+  ```bash
+  kamal details -q
+  ```
+</ParamField>
+
+## Use Cases
+
+<Accordion title="Post-deployment verification">
+  After deploying, use `kamal details` to verify all containers are running and healthy:
+  
+  ```bash
+  kamal deploy && kamal details
+  ```
+  
+  Look for:
+  - All containers show "running" status
+  - Health checks are passing
+  - Correct image versions are deployed
+</Accordion>
+
+<Accordion title="Troubleshooting deployments">
+  When a deployment isn't working, check container states:
+  
+  ```bash
+  kamal details
+  ```
+  
+  Look for:
+  - Containers in "restarting" or "exited" state
+  - Old image versions still running
+  - Missing containers
+</Accordion>
+
+<Accordion title="Monitoring infrastructure">
+  Get a quick overview of your entire deployment:
+  
+  ```bash
+  # Check everything
+  kamal details
+  
+  # Check specific server
+  kamal details --hosts prod-server-1
+  
+  # Check specific role
+  kamal details --roles web
+  ```
+</Accordion>
+
+## Component-Specific Details
+
+For more detailed information about specific components:
+
+- **App only**: [`kamal app details`](/commands/app/details)
+- **Proxy only**: [`kamal proxy details`](/commands/proxy/details)  
+- **Accessories only**: [`kamal accessory details all`](/commands/accessory/details)
+- **Specific accessory**: `kamal accessory details [NAME]`
+
+## Related Commands
+
+- [`kamal app containers`](/commands/app/containers) - List app containers only
+- [`kamal audit`](/commands/audit) - View deployment audit log
+- [`kamal config`](/commands/config) - View configuration
+
+## See Also
+
+- [Troubleshooting Guide](/troubleshooting/debugging)
+- [Deployment Overview](/deployment/deploy)

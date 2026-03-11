@@ -102,6 +102,7 @@
               "commands/redeploy",
               "commands/rollback",
               "commands/remove",
+              "commands/details",
               "commands/version"
             ]
           },
@@ -114,7 +115,8 @@
               "commands/app/details",
               "commands/app/exec",
               "commands/app/logs",
-              "commands/app/containers"
+              "commands/app/containers",
+              "commands/app/version"
             ]
           },
           {
@@ -165,7 +167,8 @@
               "commands/config",
               "commands/audit",
               "commands/lock",
-              "commands/prune"
+              "commands/prune",
+              "commands/secrets"
             ]
           }
         ]
