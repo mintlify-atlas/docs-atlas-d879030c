@@ -1,0 +1,186 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Kamal",
+  "projectDescription": "Deploy web apps anywhere with zero downtime using Docker containers.",
+  "theme": "aspen",
+  "primaryColor": "#2c343c",
+  "lightColor": "#0c84f4",
+  "darkColor": "#52a7fc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/servers",
+              "configuration/builder",
+              "configuration/registry",
+              "configuration/proxy",
+              "configuration/accessories",
+              "configuration/environment",
+              "configuration/ssh",
+              "configuration/hooks"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/setup",
+              "deployment/deploy",
+              "deployment/rollback",
+              "deployment/zero-downtime",
+              "deployment/rolling-deploys"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/docker-images",
+              "guides/ssl-certificates",
+              "guides/multiple-servers",
+              "guides/accessories-setup",
+              "guides/custom-commands",
+              "guides/secrets-management"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/kamal-proxy",
+              "advanced/build-strategies",
+              "advanced/remote-builder",
+              "advanced/asset-bridging",
+              "advanced/destinations"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "troubleshooting/common-issues",
+              "troubleshooting/debugging",
+              "troubleshooting/logs"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Command Reference",
+        "groups": [
+          {
+            "group": "Core Commands",
+            "pages": [
+              "commands/setup",
+              "commands/deploy",
+              "commands/redeploy",
+              "commands/rollback",
+              "commands/remove",
+              "commands/version"
+            ]
+          },
+          {
+            "group": "App Management",
+            "pages": [
+              "commands/app/boot",
+              "commands/app/start",
+              "commands/app/stop",
+              "commands/app/restart",
+              "commands/app/details",
+              "commands/app/exec",
+              "commands/app/logs",
+              "commands/app/containers"
+            ]
+          },
+          {
+            "group": "Build Commands",
+            "pages": [
+              "commands/build/deliver",
+              "commands/build/push",
+              "commands/build/pull",
+              "commands/build/create",
+              "commands/build/remove",
+              "commands/build/details"
+            ]
+          },
+          {
+            "group": "Proxy Commands",
+            "pages": [
+              "commands/proxy/boot",
+              "commands/proxy/reboot",
+              "commands/proxy/remove",
+              "commands/proxy/details"
+            ]
+          },
+          {
+            "group": "Accessory Commands",
+            "pages": [
+              "commands/accessory/boot",
+              "commands/accessory/reboot",
+              "commands/accessory/start",
+              "commands/accessory/stop",
+              "commands/accessory/restart",
+              "commands/accessory/details",
+              "commands/accessory/logs",
+              "commands/accessory/remove"
+            ]
+          },
+          {
+            "group": "Server & Registry",
+            "pages": [
+              "commands/server/bootstrap",
+              "commands/registry/login",
+              "commands/registry/logout"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "commands/init",
+              "commands/config",
+              "commands/audit",
+              "commands/lock",
+              "commands/prune"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Zero-downtime deployments with kamal-proxy",
+    "Docker container orchestration across multiple servers",
+    "Automated SSL certificate management via Let's Encrypt",
+    "Remote builder support for multi-architecture builds",
+    "Accessory services for databases and caching",
+    "Rolling deployments with configurable batch sizes",
+    "Asset bridging between versions",
+    "Git-based versioning and deployment tracking"
+  ],
+  "publicApiSurface": [
+    "kamal setup",
+    "kamal deploy",
+    "kamal redeploy",
+    "kamal rollback",
+    "kamal app boot",
+    "kamal app exec",
+    "kamal app logs",
+    "kamal build push",
+    "kamal build pull",
+    "kamal proxy boot",
+    "kamal accessory boot",
+    "kamal server bootstrap",
+    "kamal init",
+    "kamal config",
+    "kamal remove"
+  ]
+}
